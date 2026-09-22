@@ -6,9 +6,15 @@
   </picture>
 </h1>
 
+<div align="center">
+
 [![npm version](https://img.shields.io/npm/v/@jcubic/mitty.svg)](https://www.npmjs.com/package/@jcubic/mitty)
+[![github repo](https://img.shields.io/badge/github-repo-orange?logo=github)](https://github.com/jcubic/mitty)
 [![CI](https://github.com/jcubic/mitty/actions/workflows/ci.yml/badge.svg)](https://github.com/jcubic/mitty/actions/workflows/ci.yml)
 [![Coverage Status](https://coveralls.io/repos/github/jcubic/mitty/badge.svg)](https://coveralls.io/github/jcubic/mitty)
+[![LICENSE MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jcubic/mitty/blob/master/LICENSE)
+
+</div>
 
 ## Installation
 
