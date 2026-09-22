@@ -41,7 +41,7 @@ import * as mitty from '@jcubic/mitty';
 
 ## Origin
 
-The first idea for the mechanism was created for [Hacking Cafe](https://hacking.cafe), a Unix-like environment in the browser. It was then extracted into a NPM library. The name and logo were based on a fictional "Life" magazine worker named [Waleter Mitty](https://en.wikipedia.org/wiki/Walter_Mitty) from the movie ["The Secret Life of Walter Mitty"](<https://en.wikipedia.org/wiki/The_Secret_Life_of_Walter_Mitty_(2013_film)>).
+The first idea for the mechanism was created for [Hacking Cafe](https://hacking.cafe), a Unix-like environment in the browser. It was then extracted into an NPM library. The name and logo were based on a fictional "Life" magazine worker named [Waleter Mitty](https://en.wikipedia.org/wiki/Walter_Mitty) from the movie ["The Secret Life of Walter Mitty"](<https://en.wikipedia.org/wiki/The_Secret_Life_of_Walter_Mitty_(2013_film)>).
 
 ## License
 
