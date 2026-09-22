@@ -7,5 +7,5 @@
 </h1>
 
 ## License
-Copyright (C) Jakub T. Jankiewicz <https://jakub.jankiewicz><br/>
+Copyright (C) Jakub T. Jankiewicz <https://jakub.jankiewicz.org><br/>
 Released under MIT License
