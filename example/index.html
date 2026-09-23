@@ -1,0 +1,126 @@
+<!doctype html>
+<!--
+    Manual test page for mitty.
+
+        npm run build
+        npx serve .          (or any static server, from the repo root)
+
+    then open /example/index.html
+
+    Everything below the "worker" line runs inside a Web Worker, which has no
+    DOM and no jQuery. Each button spawns a worker that builds the list, counts
+    it and writes the log by driving jQuery on this page over a BroadcastChannel.
+-->
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>mitty &mdash; jQuery from a Web Worker</title>
+        <style>
+            body {
+                font:
+                    16px/1.5 system-ui,
+                    sans-serif;
+                margin: 2rem auto;
+                max-width: 40rem;
+                padding: 0 1rem;
+            }
+            button {
+                font: inherit;
+                padding: 0.4rem 0.8rem;
+                margin-right: 0.5rem;
+            }
+            pre {
+                background: #f4f4f4;
+                padding: 0.75rem;
+                overflow: auto;
+                min-height: 6rem;
+            }
+            #count {
+                font-weight: bold;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>mitty</h1>
+        <p>
+            The DOM below is built by a Web Worker. The worker holds no DOM nodes &mdash;
+            it drives jQuery on this page through a
+            <code>BroadcastChannel</code>.
+        </p>
+
+        <button id="classic">Run classic worker (importScripts)</button>
+        <button id="module">Run module worker (import)</button>
+
+        <ul id="list"></ul>
+        <p id="count"></p>
+        <pre id="log"></pre>
+
+        <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+        <script type="module">
+            import { Host } from '../dist/index.js';
+
+            // Only these names are reachable from a worker. Nothing else on
+            // this page is exposed.
+            const modules = {
+                $: () => jQuery,
+                log: () => ({
+                    write(message) {
+                        $('#log').append(document.createTextNode(message + '\n'));
+                    },
+                }),
+                util: () => ({
+                    // takes a callback that lives in the worker
+                    async map(items, fn) {
+                        const out = [];
+                        for (const item of items) {
+                            out.push(await fn(item));
+                        }
+                        return out;
+                    },
+                }),
+            };
+
+            let seq = 0;
+
+            function run(url, options) {
+                // one channel per worker: every worker on a shared channel
+                // would see every other worker's replies, and their request
+                // ids would collide
+                const name = `mitty-example-${++seq}`;
+                const channel = new BroadcastChannel(name);
+
+                const host = new Host({
+                    channel,
+                    resolve(name) {
+                        if (Object.hasOwn(modules, name)) {
+                            return modules[name]();
+                        }
+                        return null;
+                    },
+                    serialize(value) {
+                        // a jQuery object wraps DOM nodes and cannot be
+                        // structured-cloned; hand out a handle instead
+                        if (value instanceof $.fn.init) {
+                            return this.remote(value);
+                        }
+                        return value;
+                    },
+                });
+
+                const worker = new Worker(url, options);
+                worker.addEventListener('message', event => {
+                    if (event.data && event.data.done) {
+                        host.close();
+                        channel.close();
+                    }
+                });
+                // the worker needs to know which channel to join
+                worker.postMessage({ channel: name });
+            }
+
+            $('#classic').on('click', () => run('./worker.js'));
+            $('#module').on('click', () => run('./worker.module.js', { type: 'module' }));
+        </script>
+    </body>
+</html>

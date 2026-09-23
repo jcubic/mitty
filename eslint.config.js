@@ -14,5 +14,19 @@ export default tseslint.config(
             globals: { ...globals.node, ...globals.browser },
         },
     },
+    {
+        // the example workers run in a worker scope and reach for globals the
+        // page/bundle provides
+        files: ['example/**/*.js'],
+        languageOptions: {
+            globals: {
+                ...globals.browser,
+                ...globals.worker,
+                Mitty: 'readonly',
+                jQuery: 'readonly',
+                $: 'readonly',
+            },
+        },
+    },
     prettier,
 );

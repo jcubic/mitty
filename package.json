@@ -1,7 +1,7 @@
 {
   "name": "@jcubic/mitty",
   "version": "0.1.0",
-  "description": "TODO: describe mitty",
+  "description": "Use main thread objects like DOM nodes and jQuery objects from inside a Web Worker",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -36,7 +36,18 @@
     "type": "git",
     "url": "git+https://github.com/jcubic/mitty.git"
   },
-  "keywords": [],
+  "keywords": [
+    "web-worker",
+    "worker",
+    "rpc",
+    "proxy",
+    "broadcastchannel",
+    "dom",
+    "jquery",
+    "ipc",
+    "comlink",
+    "isomorphic"
+  ],
   "author": "Jakub T. Jankiewicz <jcubic@jcubic.pl> (https://jakub.jankiewicz.org)",
   "license": "MIT",
   "bugs": {
@@ -49,6 +60,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@vitest/coverage-v8": "^5.0.1",
+    "cheerio": "^1.2.0",
     "eslint": "^10.11.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.12.0",
