@@ -4,37 +4,46 @@ All notable changes to this project are documented in this file.
 
 Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org).
 
+## [0.3.0] - 2026-09-23
+
+### Breaking
+
+- The host sends a handle for each value that has methods. A `serialize()` hook is not necessary.
+- A class instance is now a handle, not a copy. Use `await` to read its data.
+- `serialize()` decides a value only when it returns a different value. If it does not, `remote` decides.
+
+### Features
+
+- New `remote` option. It selects the values that stay on the host. The default is `has_methods`.
+- The package exports `has_methods()`. Use it in your own `remote` function.
+
 ## [0.2.0] - 2026-09-23
 
 ### Breaking
 
-- Renamed the wire markers from `{ type, data }` to `{ __type__, __data__ }`, so ordinary objects stop colliding
-- Both ends must run the same major: a 0.1.x worker and a 0.2.x host no longer understand each other's markers
+- The markers on the wire are now `{ __type__, __data__ }`. A normal object does not collide with them.
+- Use the same version on the two ends. A 0.1.x worker cannot read the markers of a 0.2.x host.
 
 ### Bugfix
 
-- Mark the dist banner as a legal comment so minifiers won't strip it
+- The banner in `dist` is now a legal comment. A minifier keeps it.
 
 ## [0.1.2] - 2026-09-23
 
-- Copyright banner in every source and dist file
+- Each source file and each `dist` file has a copyright banner.
 
 ## [0.1.1] - 2026-09-23
 
 ### Breaking
 
-- Dropped the `unpkg` and `jsdelivr` fields, so a bare CDN URL falls through to
-  `main` and serves the ES module
-- Documented both CDN forms: bare URL for `import`, the `dist/index.global.js`
-  path for `importScripts()`
+- The `unpkg` and `jsdelivr` fields are removed. A bare CDN URL now gives the ES module.
+- The README shows two CDN forms: a bare URL for `import`, `dist/index.global.js` for `importScripts()`.
 
 ### Bugfix
 
-- A remote method named `catch` or `finally` on a bare handle is not shadowed,
-  as an empty chain has nothing to run
-- `import` from a bare jsDelivr URL, which used to serve the IIFE build and
-  therefore exported nothing
+- A remote method with the name `catch` or `finally` works on a bare handle. An empty chain has no operation.
+- `import` from a bare CDN URL works. Before, the URL gave the IIFE build, which has no exports.
 
 ## [0.1.0] - 2026-09-23
 
-- initial version
+- First version.
