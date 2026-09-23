@@ -1,3 +1,9 @@
+/*
+ * Mitty - use main thread objects from inside a Web Worker
+ *
+ * Copyright (c) 2026 Jakub T. Jankiewicz <https://jakub.jankiewicz.org>
+ * Released under MIT license
+ */
 import type { ErrorMarker, FunctionMarker, Marker, ObjectMarker } from './types';
 
 // key used to read the root/ops out of a chain proxy without going through the

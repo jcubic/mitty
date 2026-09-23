@@ -1,3 +1,9 @@
+/*
+ * Mitty - use main thread objects from inside a Web Worker
+ *
+ * Copyright (c) 2026 Jakub T. Jankiewicz <https://jakub.jankiewicz.org>
+ * Released under MIT license
+ */
 import {
     HANDLE,
     decode_error,
