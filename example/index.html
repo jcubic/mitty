@@ -98,14 +98,9 @@
                         }
                         return null;
                     },
-                    serialize(value) {
-                        // a jQuery object wraps DOM nodes and cannot be
-                        // structured-cloned; hand out a handle instead
-                        if (value instanceof $.fn.init) {
-                            return this.remote(value);
-                        }
-                        return value;
-                    },
+                    // a jQuery object wraps DOM nodes and cannot be
+                    // structured-cloned, but nothing here has to say so: it
+                    // has methods, so mitty keeps it and hands out a handle
                 });
 
                 const worker = new Worker(url, options);

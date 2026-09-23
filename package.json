@@ -1,6 +1,6 @@
 {
   "name": "@jcubic/mitty",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Use main thread objects like DOM nodes and jQuery objects from inside a Web Worker",
   "type": "module",
   "main": "./dist/index.js",

@@ -61,7 +61,7 @@ const { require } = Mitty.connect(new BroadcastChannel('my-app'));
 
 The two cannot share one URL: `importScripts()` only accepts a classic script and
 rejects a file containing `export`, while `import` needs those exports. Pin a version
-with `@` when you want the URL to stay put, e.g. `@jcubic/mitty@0.1.1`.
+with `@` when you want the URL to stay put, e.g. `@jcubic/mitty@0.3.0`.
 
 ## Quick start
 
@@ -85,14 +85,6 @@ const host = new Host({
     }
     return null;
   },
-  serialize(value) {
-    // a jQuery object wraps DOM nodes and cannot cross the channel —
-    // hand out a handle the worker can call methods on instead
-    if (value instanceof $.fn.init) {
-      return this.remote(value);
-    }
-    return value;
-  },
 });
 
 const worker = new Worker('./worker.js');
@@ -100,6 +92,9 @@ const worker = new Worker('./worker.js');
 
 Only the names your `resolve()` answers are reachable. Everything else on the page stays
 invisible to the worker.
+
+Nothing here says that a jQuery object cannot cross the channel, because it doesn't have
+to — see [What travels and what stays](#what-travels-and-what-stays).
 
 ### Worker
 
@@ -151,7 +146,7 @@ let seq = 0;
 
 function spawn(url) {
   const name = `my-app-${++seq}`;
-  const host = new Host({ channel: new BroadcastChannel(name), resolve, serialize });
+  const host = new Host({ channel: new BroadcastChannel(name), resolve });
   const worker = new Worker(url);
   worker.postMessage({ channel: name }); // tell the worker which one to join
   return { host, worker };
@@ -209,11 +204,72 @@ const console = {
 console.log('this works'); // the writes still happen
 ```
 
+## What travels and what stays
+
+Every value on its way to the worker is either **copied** as JSON or **kept** on the main
+thread behind a handle. Mitty decides by asking whether the value's methods are the point
+of it:
+
+```js
+await require('fs').readdir('/'); // ['bin', 'home'] — copied, an array is still an array
+await require('fs').stat('/etc'); // a handle — Stat without isFile() would be useless
+```
+
+The rule is `has_methods()`, exported so you can use it yourself. It looks at the whole
+prototype chain, not just own properties — which is the point, because a class keeps its
+methods on the prototype:
+
+```js
+class Stat {
+  constructor(type) {
+    this.type = type;
+  }
+  isFile() {
+    return this.type === 'file';
+  }
+}
+```
+
+`Object.keys(new Stat('file'))` is `['type']`, so a check for own function properties sees
+plain data and copies it. The worker then gets `{ type: 'file' }` and `stat.isFile()` throws
+`is not a function` — silently, at the far end, long after the decision was made. Hence the
+default.
+
+Values JSON already carries faithfully stay data even though their prototypes are full of
+methods: arrays, typed arrays, and anything with a `toJSON()`. Errors are encoded as errors
+before any of this runs. Functions returned by the host are still dropped.
+
+### Overriding it
+
+`serialize()` runs first and wins whenever it returns something different:
+
+```js
+new Host({
+  channel,
+  resolve,
+  serialize(value) {
+    // send a summary instead of a handle
+    return value instanceof Stat ? { type: value.type } : value;
+  },
+});
+```
+
+Or replace the rule with a predicate of your own. It replaces the default rather than
+adding to it, so `() => false` opts out entirely and goes back to explicit handles:
+
+```js
+new Host({ channel, resolve, remote: value => value instanceof Node });
+```
+
 ## Handles and memory
 
-Anything `serialize()` turns into a handle with `this.remote(value)` is kept alive on the
-main thread until it is released. There is no automatic collection — a handle is a plain
-integer on the wire, and the host cannot see when the worker drops its proxy.
+Anything that becomes a handle — by the default rule or by `this.remote(value)` — is kept
+alive on the main thread until it is released. There is no automatic collection: a handle
+is a plain integer on the wire, and the host cannot see when the worker drops its proxy.
+
+Because handles are now handed out without being asked for, this is worth a thought for a
+long-lived host. A worker that calls `fs.stat()` in a loop pins one object per call until
+the host is closed. Release them, or narrow the rule with `remote` so fewer values qualify.
 
 Release explicitly when you are done:
 
@@ -285,20 +341,28 @@ await $('#list')
 
 ### `new Host(options)`
 
-| option        | type                 | description                                                                                  |
-| ------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| `channel`     | `Channel`            | Transport to listen on. Required. Never closed by mitty.                                     |
-| `resolve`     | `(name) => unknown`  | Turns a `require()` name into a value. Return `null`/`undefined` for unknown. May be async.  |
-| `serialize`   | `(value) => unknown` | Called for every outgoing value. Return `this.remote(value)` for anything JSON cannot carry. |
-| `unserialize` | `(value) => unknown` | Called for every incoming value.                                                             |
+| option        | type                 | description                                                                                                  |
+| ------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `channel`     | `Channel`            | Transport to listen on. Required. Never closed by mitty.                                                     |
+| `resolve`     | `(name) => unknown`  | Turns a `require()` name into a value. Return `null`/`undefined` for unknown. May be async.                  |
+| `serialize`   | `(value) => unknown` | Called for every outgoing value, before `remote`. Return a different value to decide that one yourself.      |
+| `unserialize` | `(value) => unknown` | Called for every incoming value.                                                                             |
+| `remote`      | `(value) => boolean` | Which values stay behind a handle. Defaults to `has_methods`. Replaces the default rather than adding to it. |
 
 `serialize` and `unserialize` are called with the host as `this`.
 
-- **`host.remote(value)`** — register `value` and return a handle marker. Call this from
-  `serialize()`.
+- **`host.remote(value)`** — register `value` and return a handle marker. Only needed from
+  `serialize()`, for something the `remote` predicate does not catch.
 - **`host.release(handle)`** — drop a handle, by marker or by id. Returns `false` if it
   was already gone.
 - **`host.close()`** — stop listening and forget every handle.
+
+### `has_methods(value)`
+
+The default `remote` predicate: `true` when the value has a callable property anywhere on
+its prototype chain below `Object.prototype`. Arrays, typed arrays, anything with a
+`toJSON()`, functions and primitives are all `false`. Getters are read as descriptors, so
+asking never invokes one.
 
 ### `connect(channel)`
 
@@ -326,8 +390,12 @@ Messages on the wire are JSON strings, so a channel only has to carry text.
 
 ## Limitations
 
-- **Values must survive JSON.** Anything else needs a handle via `serialize()`. Circular
-  structures fail the call that would return them.
+- **Values must survive JSON**, unless they become a handle — see
+  [What travels and what stays](#what-travels-and-what-stays). Circular structures fail the
+  call that would return them.
+- **The rule is one-way.** The host decides what it keeps; a worker has no equivalent, so an
+  object the worker sends as an argument is always copied and arrives without its methods.
+  Only functions travel from the worker, as callbacks.
 - **`{ __type__, __data__ }` is reserved.** Functions, handles and errors travel as
   objects of that exact shape, so an application value with both of those keys would be
   mistaken for one. The dunder names are deliberate — they are unlikely to occur in real

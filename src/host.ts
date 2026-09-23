@@ -13,6 +13,7 @@ import {
     is_object_marker,
 } from './protocol';
 import type { Channel, ChannelListener, ObjectMarker, Op } from './types';
+import { has_methods } from './values';
 
 export interface HostOptions {
     // the transport this host listens on; the host never closes it
@@ -20,12 +21,18 @@ export interface HostOptions {
     // turn a module name from require() into the value the chain runs against.
     // Return null/undefined for an unknown name. May be async.
     resolve(name: string): unknown;
-    // called for every value on its way out. Return this.remote(value) for
-    // anything that cannot survive JSON (DOM nodes, jQuery objects, class
-    // instances with methods), otherwise return the value untouched.
+    // called for every value on its way out, before the `remote` predicate
+    // below. Return a different value to decide the matter yourself - a plain
+    // copy to send data where a handle would be the default, or
+    // this.remote(value) for something the default would not catch.
     serialize?(this: Host, value: unknown): unknown;
     // called for every value coming in from the client
     unserialize?(this: Host, value: unknown): unknown;
+    // which values stay here behind a handle instead of being copied.
+    // Defaults to has_methods(), so a DOM node, a jQuery object or any class
+    // instance keeps working in the worker with nothing configured. Replaces
+    // the default rather than adding to it: `() => false` turns it off.
+    remote?(value: unknown): boolean;
 }
 
 interface Message {
@@ -105,18 +112,36 @@ export class Host {
         // bound here because the replacer has to be a plain function - its
         // `this` is the holder object, not the Host
         const hook = this._options.serialize?.bind(this);
+        const wanted = this._options.remote ?? has_methods;
+        const remote = this.remote.bind(this);
+        // JSON.stringify offers the replacer the whole message first, under an
+        // empty key. That one is the envelope every reply travels in, not a
+        // value being sent, so no predicate gets a say over it
+        let envelope = true;
         return JSON.stringify(data, function (this: Record<string, unknown>, key, value) {
             // read the untouched value off the holder: by the time a replacer
             // runs, JSON.stringify has already swapped in the result of any
             // toJSON(), which hides what we need to recognise
             const raw = this[key];
+            if (envelope) {
+                envelope = false;
+                return value;
+            }
             if (raw instanceof Error) {
                 return encode_error(raw);
             }
             const result = hook ? hook(raw) : raw;
-            // when the hook passes a value through, fall back to `value` so
-            // ordinary JSON conventions (Date#toJSON and friends) still apply
-            return result === raw ? value : result;
+            if (result !== raw) {
+                // the hook decided; it is the one place that can override
+                // both the default and a `remote` predicate
+                return result;
+            }
+            if (wanted(raw)) {
+                return remote(raw);
+            }
+            // nothing claimed the value, so fall back to `value` and let the
+            // ordinary JSON conventions (Date#toJSON and friends) apply
+            return value;
         });
     }
 
