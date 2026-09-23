@@ -31,6 +31,12 @@ interface Message {
 
 type Callback = (...args: unknown[]) => unknown;
 
+const PROMISE_METHODS = ['then', 'catch', 'finally'];
+
+function is_promise_method(key: string): boolean {
+    return PROMISE_METHODS.includes(key);
+}
+
 function chain_info(value: unknown): ChainInfo | undefined {
     if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
         return undefined;
@@ -175,19 +181,24 @@ export function connect(channel: Channel): Client {
                 if (key === HANDLE) {
                     return { root, ops };
                 }
+                // a chain with something recorded behaves like a promise:
+                // attaching then/catch/finally is what triggers execution
+                if (ops.length && typeof key === 'string' && is_promise_method(key)) {
+                    return (...args: unknown[]) => {
+                        const promise = call(root, ops) as unknown as Record<
+                            string,
+                            (...args: unknown[]) => unknown
+                        >;
+                        return promise[key](...args);
+                    };
+                }
+                // with nothing recorded there is nothing to run. `then` still
+                // has to be hidden - a bare handle resolves to another handle,
+                // and native promise resolution would keep adopting it
+                // forever. catch/finally carry no such hazard, so they fall
+                // through and stay callable as ordinary remote methods.
                 if (key === 'then') {
-                    // becoming a real thenable is what triggers execution.
-                    // Only do that when there is something to run: a bare
-                    // handle (no ops yet) has to stay non-thenable, because it
-                    // resolves to another handle and promise resolution would
-                    // otherwise keep adopting it forever.
-                    if (!ops.length) {
-                        return undefined;
-                    }
-                    return (
-                        resolve: (value: unknown) => void,
-                        reject: (reason: unknown) => void,
-                    ) => call(root, ops).then(resolve, reject);
+                    return undefined;
                 }
                 if (typeof key !== 'string') {
                     return undefined;

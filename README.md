@@ -37,12 +37,31 @@ await $('#list').find('li').first().text(); // one message, not four
 npm install @jcubic/mitty
 ```
 
-Or from a CDN, for a `<script>` tag or `importScripts()` — the build exposes a `Mitty`
-global:
+No install is needed to use it from a CDN. Two builds ship, and which one you get
+depends on the URL.
+
+The **bare URL is the ES module**, for `import` in a page or a module worker:
+
+```js
+import { connect, Host } from 'https://cdn.jsdelivr.net/npm/@jcubic/mitty';
+```
+
+The **`dist/index.global.js` path is the standalone build**, which defines a `Mitty`
+global for `importScripts()` and classic `<script>` tags:
+
+```js
+importScripts('https://cdn.jsdelivr.net/npm/@jcubic/mitty/dist/index.global.js');
+
+const { require } = Mitty.connect(new BroadcastChannel('my-app'));
+```
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@jcubic/mitty"></script>
+<script src="https://cdn.jsdelivr.net/npm/@jcubic/mitty/dist/index.global.js"></script>
 ```
+
+The two cannot share one URL: `importScripts()` only accepts a classic script and
+rejects a file containing `export`, while `import` needs those exports. Pin a version
+with `@` when you want the URL to stay put, e.g. `@jcubic/mitty@0.1.1`.
 
 ## Quick start
 
@@ -84,10 +103,12 @@ invisible to the worker.
 
 ### Worker
 
-With an `import` statement, in a worker started with `{ type: 'module' }`:
+With an `import` statement, in a worker started with `{ type: 'module' }` — from your
+bundler, or straight from the CDN:
 
 ```js
 import { connect } from '@jcubic/mitty';
+// or: from 'https://cdn.jsdelivr.net/npm/@jcubic/mitty'
 
 const { require } = connect(new BroadcastChannel('my-app'));
 
@@ -98,9 +119,24 @@ await $('.terminal').terminal().echo('Hello from a worker');
 Or with `importScripts()`, in a classic worker:
 
 ```js
-importScripts('https://cdn.jsdelivr.net/npm/@jcubic/mitty');
+importScripts('https://cdn.jsdelivr.net/npm/@jcubic/mitty/dist/index.global.js');
 
 const { require } = Mitty.connect(new BroadcastChannel('my-app'));
+```
+
+#### Blob URL
+
+If the worker itself is created from a `Blob` — which is how you run code generated at
+runtime — a URL you pass to `importScripts()` **must be absolute**. A `blob:` URL has an
+opaque path, so `'/mitty.js'` and `'./mitty.js'` have nothing to resolve against and are
+rejected as invalid. A CDN URL is already absolute and needs nothing else; if you serve
+your own copy instead, name it in full:
+
+```js
+// in the page, when generating the worker source
+const mitty = new URL('/mitty.js', location.href).href;
+const source = `importScripts(${JSON.stringify(mitty)}); /* ... */`;
+const worker = new Worker(URL.createObjectURL(new Blob([source])));
 ```
 
 ## One channel per worker
@@ -138,12 +174,40 @@ step appends to a list of operations held in the worker:
 ];
 ```
 
-Nothing is sent until the chain is awaited — that is the only point at which the proxy
-becomes a real thenable. The host then walks the whole list against the resolved module
-and sends back the final value.
+Nothing is sent until you attach `then`, `catch` or `finally` — usually by awaiting the
+chain. That is the point at which the proxy behaves as a promise. The host then walks the
+whole list against the resolved module and sends back the final value.
 
-A consequence worth knowing: a proxy you have not awaited is not a promise, and a bare
-handle is not one either. Both are inert until you chain something onto them and await.
+A consequence worth knowing: a chain with nothing recorded yet is not a promise, and a
+bare handle is not one either. `require('x')` and an awaited handle are both inert until
+you chain something onto them. That is also why a remote method genuinely named `catch`
+or `finally` still works — on a bare handle there is nothing to run, so the name is
+treated as an ordinary property access rather than a promise method.
+
+### There is no fire-and-forget
+
+Because the message is only sent when you attach `then`/`catch`/`finally`, a call you
+never await does **nothing at all** — silently, with no error:
+
+```js
+stdout.writeln('hello'); // never sent
+await stdout.writeln('hello'); // sent
+```
+
+This bites hardest in a helper that wraps remote calls. Await inside it, and the helper
+stays convenient to call without `await`, because awaiting internally is what dispatches
+the messages:
+
+```js
+const console = {
+  log: async (...args) => {
+    await stdout.writeln(args.join(' '));
+    await stdout.flush();
+  },
+};
+
+console.log('this works'); // the writes still happen
+```
 
 ## Handles and memory
 
@@ -207,6 +271,14 @@ try {
   error instanceof Error; // true
   error.message; // "mitty: $().nosuchmethod is not a function"
 }
+```
+
+`catch()` works directly on a chain too, without awaiting it first:
+
+```js
+await $('#list')
+  .nosuchmethod()
+  .catch(error => report(error));
 ```
 
 ## API

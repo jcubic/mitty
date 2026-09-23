@@ -61,6 +61,8 @@ export interface Remote {
         onfulfilled?: ((value: any) => R1 | PromiseLike<R1>) | null,
         onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | null,
     ): Promise<R1 | R2>;
+    catch<R = any>(onrejected?: ((reason: any) => R | PromiseLike<R>) | null): Promise<R>;
+    finally(onfinally?: (() => void) | null): Promise<any>;
     [key: string]: any;
 }
 

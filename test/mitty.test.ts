@@ -282,6 +282,88 @@ describe('errors', () => {
     });
 });
 
+describe('promise interface', () => {
+    function boom_pair() {
+        return module_pair('app', {
+            boom: () => {
+                throw new Error('kaboom');
+            },
+            ok: () => 7,
+        });
+    }
+
+    it('handles a rejection through catch()', async () => {
+        const { client } = boom_pair();
+        let message = '';
+        await client
+            .require('app')
+            .boom()
+            .catch((error: Error) => {
+                message = error.message;
+            });
+        expect(message).toBe('kaboom');
+    });
+
+    it('leaves a successful value alone in catch()', async () => {
+        const { client } = boom_pair();
+        expect(
+            await client
+                .require('app')
+                .ok()
+                .catch(() => -1),
+        ).toBe(7);
+    });
+
+    it('runs finally() and passes the value through', async () => {
+        const { client } = boom_pair();
+        let ran = false;
+        const value = await client
+            .require('app')
+            .ok()
+            .finally(() => {
+                ran = true;
+            });
+        expect(ran).toBe(true);
+        expect(value).toBe(7);
+    });
+
+    it('runs finally() when the call rejects', async () => {
+        const { client } = boom_pair();
+        let ran = false;
+        await expect(
+            client
+                .require('app')
+                .boom()
+                .finally(() => {
+                    ran = true;
+                }),
+        ).rejects.toThrow('kaboom');
+        expect(ran).toBe(true);
+    });
+
+    it('chains catch() after then()', async () => {
+        const { client } = boom_pair();
+        const value = await client
+            .require('app')
+            .boom()
+            .then(() => 'no')
+            .catch(() => 'caught');
+        expect(value).toBe('caught');
+    });
+
+    // with nothing recorded there is nothing to run, so these stay ordinary
+    // remote property accesses rather than promise methods
+    it('still calls a remote method named catch', async () => {
+        const { client } = module_pair('app', { catch: () => 'remote catch' });
+        expect(await client.require('app').catch()).toBe('remote catch');
+    });
+
+    it('still calls a remote method named finally', async () => {
+        const { client } = module_pair('app', { finally: () => 'remote finally' });
+        expect(await client.require('app').finally()).toBe('remote finally');
+    });
+});
+
 describe('serialize hooks', () => {
     it('passes values through unserialize on the host', async () => {
         const { client } = pair({

@@ -1,19 +1,19 @@
 {
   "name": "@jcubic/mitty",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Use main thread objects like DOM nodes and jQuery objects from inside a Web Worker",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "unpkg": "./dist/index.global.js",
-  "jsdelivr": "./dist/index.global.js",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    }
+    },
+    "./dist/*": "./dist/*",
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",
