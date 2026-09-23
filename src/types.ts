@@ -26,24 +26,25 @@ export interface Channel {
 }
 
 // -----------------------------------------------------------------------------
-// Wire markers: values that JSON cannot carry on its own. They are plain
-// objects so the payload stays JSON, which means an application object that
-// happens to have this exact `{ type, data }` shape would be mistaken for one -
-// see the README for the reserved shape.
+// Wire markers: values that JSON cannot carry on its own. They stay plain
+// objects so the payload is still JSON, which means any application value of
+// the same shape would be mistaken for one. The dunder names borrow Python's
+// convention to make that collision unlikely - `{ type, data }` is an ordinary
+// shape to find in application data, `{ __type__, __data__ }` is not.
 // -----------------------------------------------------------------------------
 export interface FunctionMarker {
-    type: 'function';
-    data: [id: number, length: number];
+    __type__: 'function';
+    __data__: [id: number, length: number];
 }
 
 export interface ObjectMarker {
-    type: 'object';
-    data: [id: number];
+    __type__: 'object';
+    __data__: [id: number];
 }
 
 export interface ErrorMarker {
-    type: 'error';
-    data: [name: string, message: string, stack: string | null];
+    __type__: 'error';
+    __data__: [name: string, message: string, stack: string | null];
 }
 
 export type Marker = FunctionMarker | ObjectMarker | ErrorMarker;

@@ -328,8 +328,10 @@ Messages on the wire are JSON strings, so a channel only has to carry text.
 
 - **Values must survive JSON.** Anything else needs a handle via `serialize()`. Circular
   structures fail the call that would return them.
-- **`{ type, data }` is reserved.** Functions, handles and errors travel as objects of
-  that exact shape. An application object that looks identical would be mistaken for one.
+- **`{ __type__, __data__ }` is reserved.** Functions, handles and errors travel as
+  objects of that exact shape, so an application value with both of those keys would be
+  mistaken for one. The dunder names are deliberate — they are unlikely to occur in real
+  data, so ordinary objects such as `{ type: 'object', data: [1] }` pass through intact.
 - **Functions returned from the host are dropped**, as they would be by `JSON.stringify`.
   Expose them through a handle instead.
 - **Handles are not garbage collected** — see [Handles and memory](#handles-and-memory).

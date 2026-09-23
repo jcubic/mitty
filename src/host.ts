@@ -72,14 +72,14 @@ export class Host {
     public remote(value: unknown): ObjectMarker {
         const id = ++this._object_id;
         this._objects.set(id, value);
-        return { type: 'object', data: [id] };
+        return { __type__: 'object', __data__: [id] };
     }
 
     // -------------------------------------------------------------------------
     // drop a handle. Returns false if it was already gone.
     // -------------------------------------------------------------------------
     public release(handle: ObjectMarker | number): boolean {
-        const id = typeof handle === 'number' ? handle : handle?.data?.[0];
+        const id = typeof handle === 'number' ? handle : handle?.__data__?.[0];
         if (typeof id !== 'number') {
             throw new TypeError('mitty: release() expects a handle returned by remote()');
         }
@@ -132,11 +132,11 @@ export class Host {
         try {
             const data = JSON.parse(text, (_key, value) => {
                 if (is_function_marker(value)) {
-                    const [id, length] = value.data;
+                    const [id, length] = value.__data__;
                     return this._callback(id, length);
                 }
                 if (is_object_marker(value)) {
-                    const [id] = value.data;
+                    const [id] = value.__data__;
                     if (!this._objects.has(id)) {
                         deferred = deferred ?? invalid_handle(id);
                         return undefined;

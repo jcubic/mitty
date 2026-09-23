@@ -14,13 +14,13 @@ export const HANDLE = Symbol.for('@jcubic/mitty/handle');
 
 export function encode_error(error: Error): ErrorMarker {
     return {
-        type: 'error',
-        data: [error.name, error.message, error.stack ?? null],
+        __type__: 'error',
+        __data__: [error.name, error.message, error.stack ?? null],
     };
 }
 
 export function decode_error(marker: ErrorMarker): Error {
-    const [name, message, stack] = marker.data;
+    const [name, message, stack] = marker.__data__;
     const error = new Error(message);
     error.name = name;
     if (stack !== null) {
@@ -35,21 +35,21 @@ function is_marker(value: unknown): value is Marker {
     return (
         typeof value === 'object' &&
         value !== null &&
-        typeof (value as Marker).type === 'string' &&
-        Array.isArray((value as Marker).data)
+        typeof (value as Marker).__type__ === 'string' &&
+        Array.isArray((value as Marker).__data__)
     );
 }
 
 export function is_function_marker(value: unknown): value is FunctionMarker {
-    return is_marker(value) && value.type === 'function';
+    return is_marker(value) && value.__type__ === 'function';
 }
 
 export function is_object_marker(value: unknown): value is ObjectMarker {
-    return is_marker(value) && value.type === 'object';
+    return is_marker(value) && value.__type__ === 'object';
 }
 
 export function is_error_marker(value: unknown): value is ErrorMarker {
-    return is_marker(value) && value.type === 'error';
+    return is_marker(value) && value.__type__ === 'error';
 }
 
 export function invalid_handle(id: number): Error {

@@ -83,7 +83,7 @@ export function connect(channel: Channel): Client {
                 }
                 // a handle can go back to the host, which swaps it for the
                 // object it stands for
-                return { type: 'object', data: [chain.root.object] };
+                return { __type__: 'object', __data__: [chain.root.object] };
             }
             if (typeof raw === 'function') {
                 let id = callback_ids.get(raw as Callback);
@@ -92,7 +92,7 @@ export function connect(channel: Channel): Client {
                     callback_ids.set(raw as Callback, id);
                     callbacks.set(id, raw as Callback);
                 }
-                return { type: 'function', data: [id, raw.length] };
+                return { __type__: 'function', __data__: [id, raw.length] };
             }
             return value;
         });
@@ -103,7 +103,7 @@ export function connect(channel: Channel): Client {
             if (is_object_marker(value)) {
                 // a handle to something on the host - make it a chain rooted
                 // there rather than handing back the marker itself
-                return make_chain({ object: value.data[0] });
+                return make_chain({ object: value.__data__[0] });
             }
             if (is_error_marker(value)) {
                 return decode_error(value);
