@@ -17,7 +17,7 @@
 </div>
 
 Use objects that only exist on the main thread — DOM nodes, jQuery objects, class
-instances with methods — from inside a Web Worker.
+instances with methods, or anything that is inaccessible from inside a Web/Service Worker.
 
 A worker has no DOM, and `postMessage` cannot carry a DOM node, a jQuery object, or
 anything else that isn't structured-cloneable. Mitty leaves the real object on the main
