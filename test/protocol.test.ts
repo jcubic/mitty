@@ -46,7 +46,7 @@ function wired(options: Omit<HostOptions, 'channel'>): {
     });
     return {
         client,
-        wire: () => [...host_channel.sent, ...client_channel.sent].join('\n'),
+        wire: () => [...host_channel.sent, ...client_channel.sent].join('\n')
     };
 }
 
@@ -59,7 +59,7 @@ afterEach(() => {
 describe('wire format', () => {
     it('tags a function with __type__ and __data__', async () => {
         const { client, wire } = wired({
-            resolve: () => ({ run: (fn: () => unknown) => fn() }),
+            resolve: () => ({ run: (fn: () => unknown) => fn() })
         });
         await client.require('app').run(() => 1);
         expect(wire()).toContain('__type__');
@@ -73,7 +73,7 @@ describe('wire format', () => {
             resolve: () => ({ get: () => new Thing() }),
             serialize(this: Host, value: unknown) {
                 return value instanceof Thing ? this.remote(value) : value;
-            },
+            }
         });
         await client.require('app').get();
         expect(wire()).toContain('"__type__":"object"');
@@ -85,8 +85,8 @@ describe('wire format', () => {
             resolve: () => ({
                 boom: () => {
                     throw new Error('kaboom');
-                },
-            }),
+                }
+            })
         });
         await expect(client.require('app').boom()).rejects.toThrow('kaboom');
         expect(wire()).toContain('"__type__":"error"');
@@ -100,7 +100,7 @@ describe('objects that look like markers', () => {
     const decoys = [
         { type: 'object', data: [1] },
         { type: 'function', data: [1, 0] },
-        { type: 'error', data: ['Error', 'nope', null] },
+        { type: 'error', data: ['Error', 'nope', null] }
     ];
 
     it('round-trips a colliding object from the host', async () => {
@@ -115,7 +115,7 @@ describe('objects that look like markers', () => {
 
     it('keeps a colliding object a plain object, not a proxy', async () => {
         const { client } = wired({
-            resolve: () => ({ get: () => ({ type: 'object', data: [99] }) }),
+            resolve: () => ({ get: () => ({ type: 'object', data: [99] }) })
         });
         const value = await client.require('app').get();
         expect(typeof value).toBe('object');

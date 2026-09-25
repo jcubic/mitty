@@ -23,21 +23,21 @@ class Counter {
 describe('modules', () => {
     it('calls a function on a resolved module', async () => {
         const { client } = module_pair('math', {
-            add: (a: number, b: number) => a + b,
+            add: (a: number, b: number) => a + b
         });
         expect(await client.require('math').add(2, 3)).toBe(5);
     });
 
     it('awaits async functions on the host', async () => {
         const { client } = module_pair('math', {
-            slow: async (n: number) => n * 2,
+            slow: async (n: number) => n * 2
         });
         expect(await client.require('math').slow(21)).toBe(42);
     });
 
     it('resolves a whole property chain in one round trip', async () => {
         const { client } = module_pair('app', {
-            nested: { deep: { value: 42, greet: (n: string) => `hi ${n}` } },
+            nested: { deep: { value: 42, greet: (n: string) => `hi ${n}` } }
         });
         const { require } = client;
         expect(await require('app').nested.deep.value).toBe(42);
@@ -69,7 +69,7 @@ describe('remote handles', () => {
                 name === 'counter'
                     ? {
                           get: () => counter,
-                          is_same: (other: unknown) => other === counter,
+                          is_same: (other: unknown) => other === counter
                       }
                     : null,
             serialize(this: Host, value: unknown) {
@@ -77,7 +77,7 @@ describe('remote handles', () => {
                     return this.remote(value);
                 }
                 return value;
-            },
+            }
         });
         return { ...result, counter };
     }
@@ -124,7 +124,7 @@ describe('remote handles', () => {
         const { client } = counter_pair();
         const { require } = client;
         await expect(
-            require('counter').is_same(require('counter').get()),
+            require('counter').is_same(require('counter').get())
         ).rejects.toThrow(/unresolved/i);
     });
 });
@@ -137,7 +137,7 @@ describe('release', () => {
                 name === 'counter' ? { get: () => counter } : null,
             serialize(this: Host, value: unknown) {
                 return value instanceof Counter ? this.remote(value) : value;
-            },
+            }
         });
     }
 
@@ -191,7 +191,7 @@ describe('callbacks', () => {
                     out.push(await fn(item));
                 }
                 return out;
-            },
+            }
         });
         const result = await client.require('app').each([1, 2, 3], (n: number) => n * 2);
         expect(result).toEqual([2, 4, 6]);
@@ -199,7 +199,7 @@ describe('callbacks', () => {
 
     it('truncates arguments to the callback arity', async () => {
         const { client } = module_pair('app', {
-            run: (fn: (...args: unknown[]) => Promise<unknown>) => fn('a', 'b', 'c'),
+            run: (fn: (...args: unknown[]) => Promise<unknown>) => fn('a', 'b', 'c')
         });
         const seen = await client.require('app').run((first: string) => [first]);
         expect(seen).toEqual(['a']);
@@ -207,7 +207,7 @@ describe('callbacks', () => {
 
     it('supports an async callback', async () => {
         const { client } = module_pair('app', {
-            run: (fn: () => Promise<string>) => fn(),
+            run: (fn: () => Promise<string>) => fn()
         });
         const value = await client.require('app').run(async () => 'later');
         expect(value).toBe('later');
@@ -215,13 +215,13 @@ describe('callbacks', () => {
 
     it('keeps concurrent invocations of one callback separate', async () => {
         const { client } = module_pair('app', {
-            both: (fn: (n: number) => Promise<number>) => Promise.all([fn(1), fn(2)]),
+            both: (fn: (n: number) => Promise<number>) => Promise.all([fn(1), fn(2)])
         });
         const result = await client
             .require('app')
             .both(
                 async (n: number) =>
-                    new Promise(resolve => setTimeout(() => resolve(n * 10), n * 10)),
+                    new Promise(resolve => setTimeout(() => resolve(n * 10), n * 10))
             );
         expect(result).toEqual([10, 20]);
     });
@@ -232,7 +232,7 @@ describe('errors', () => {
         const { client } = module_pair('app', {
             boom: () => {
                 throw new Error('kaboom');
-            },
+            }
         });
         await expect(client.require('app').boom()).rejects.toThrow('kaboom');
     });
@@ -241,7 +241,7 @@ describe('errors', () => {
         const { client } = module_pair('app', {
             boom: () => {
                 throw new Error('kaboom');
-            },
+            }
         });
         try {
             await client.require('app').boom();
@@ -262,7 +262,7 @@ describe('errors', () => {
         const { client } = module_pair('app', {
             boom: () => {
                 throw new CustomError('nope');
-            },
+            }
         });
         try {
             await client.require('app').boom();
@@ -276,7 +276,7 @@ describe('errors', () => {
         const { client } = module_pair('app', {
             boom: async () => {
                 throw new Error('async kaboom');
-            },
+            }
         });
         await expect(client.require('app').boom()).rejects.toThrow('async kaboom');
     });
@@ -288,7 +288,7 @@ describe('promise interface', () => {
             boom: () => {
                 throw new Error('kaboom');
             },
-            ok: () => 7,
+            ok: () => 7
         });
     }
 
@@ -310,7 +310,7 @@ describe('promise interface', () => {
             await client
                 .require('app')
                 .ok()
-                .catch(() => -1),
+                .catch(() => -1)
         ).toBe(7);
     });
 
@@ -336,7 +336,7 @@ describe('promise interface', () => {
                 .boom()
                 .finally(() => {
                     ran = true;
-                }),
+                })
         ).rejects.toThrow('kaboom');
         expect(ran).toBe(true);
     });
@@ -368,15 +368,14 @@ describe('serialize hooks', () => {
     it('passes values through unserialize on the host', async () => {
         const { client } = pair({
             resolve: () => ({ echo: (value: unknown) => value }),
-            unserialize: (value: unknown) =>
-                value === '__MARKER__' ? 'unpacked' : value,
+            unserialize: (value: unknown) => (value === '__MARKER__' ? 'unpacked' : value)
         });
         expect(await client.require('app').echo('__MARKER__')).toBe('unpacked');
     });
 
     it('leaves plain JSON values untouched', async () => {
         const { client } = module_pair('app', {
-            echo: (value: unknown) => value,
+            echo: (value: unknown) => value
         });
         const value = { a: 1, b: [1, 2, { c: 'three' }], d: null, e: true };
         expect(await client.require('app').echo(value)).toEqual(value);

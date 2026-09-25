@@ -26,7 +26,7 @@ describe('handles without a serialize hook', () => {
         return module_pair('fs', {
             stat: (name: string) => new Stat(name.endsWith('/') ? 'dir' : 'file', 12),
             readdir: () => ['one', 'two'],
-            config: () => ({ debug: true, paths: ['/bin'] }),
+            config: () => ({ debug: true, paths: ['/bin'] })
         });
     }
 
@@ -54,13 +54,13 @@ describe('handles without a serialize hook', () => {
         expect(await client.require('fs').readdir()).toEqual(['one', 'two']);
         expect(await client.require('fs').config()).toEqual({
             debug: true,
-            paths: ['/bin'],
+            paths: ['/bin']
         });
     });
 
     it('copies a value nested in plain data, as a handle', async () => {
         const { client } = module_pair('fs', {
-            entries: () => ({ total: 1, first: new Stat('file', 3) }),
+            entries: () => ({ total: 1, first: new Stat('file', 3) })
         });
         const result = await client.require('fs').entries();
         expect(result.total).toBe(1);
@@ -74,10 +74,10 @@ describe('handles without a serialize hook', () => {
         const { client } = module_pair('fs', {
             open: () => {
                 throw new Error('ENOENT: no such file or directory');
-            },
+            }
         });
         await expect(client.require('fs').open()).rejects.toThrow(
-            'ENOENT: no such file or directory',
+            'ENOENT: no such file or directory'
         );
     });
 });
@@ -89,7 +89,7 @@ describe('choosing what becomes a handle', () => {
             resolve: () => ({ stat: () => new Stat('file', 12) }),
             serialize(value: unknown) {
                 return value instanceof Stat ? { type: value.type } : value;
-            },
+            }
         });
         expect(await client.require('fs').stat()).toEqual({ type: 'file' });
     });
@@ -97,7 +97,7 @@ describe('choosing what becomes a handle', () => {
     it('takes a predicate of its own', async () => {
         const { client } = pair({
             resolve: () => ({ stat: () => new Stat('file', 12) }),
-            remote: () => false,
+            remote: () => false
         });
         const stat = await client.require('fs').stat();
         // copied, so the data is there and the method is not
@@ -111,9 +111,9 @@ describe('choosing what becomes a handle', () => {
         const { client } = pair({
             resolve: () => ({
                 widget: () => new Widget(),
-                stat: () => new Stat('file', 12),
+                stat: () => new Stat('file', 12)
             }),
-            remote: value => value instanceof Widget,
+            remote: value => value instanceof Widget
         });
         // Widget has no methods, so only an explicit predicate reaches it
         expect(await client.require('m').widget().name).toBe('w');
@@ -127,7 +127,7 @@ describe('choosing what becomes a handle', () => {
         // travels in, if the root were not left alone
         const { client } = pair({
             resolve: () => ({ get: () => 42 }),
-            remote: value => typeof value === 'object' && value !== null,
+            remote: value => typeof value === 'object' && value !== null
         });
         expect(await client.require('m').get()).toBe(42);
     });
@@ -156,7 +156,7 @@ describe('serialize() and the default together', () => {
             serialize(this: Host, value: unknown) {
                 seen.push(value);
                 return value;
-            },
+            }
         });
         const stat = await client.require('fs').stat();
         // the hook was offered the Stat and passed on it, so the default took it

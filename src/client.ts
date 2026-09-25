@@ -9,9 +9,16 @@ import {
     decode_error,
     encode_error,
     is_error_marker,
-    is_object_marker,
+    is_object_marker
 } from './protocol';
-import type { Channel, ChannelListener, Client, Op, Remote } from './types';
+import type {
+    Channel,
+    ChannelListener,
+    Client,
+    ClientOptions,
+    Op,
+    Remote
+} from './types';
 
 // what a chain is rooted at: a module looked up by name, or an object that
 // stayed behind on the host
@@ -27,6 +34,8 @@ interface ChainInfo {
 
 interface Message {
     id?: number;
+    // present on a request, never on a reply - see the listener below
+    ops?: unknown;
     callback?: number;
     call?: number;
     args?: unknown[];
@@ -54,7 +63,14 @@ function chain_info(value: unknown): ChainInfo | undefined {
 // Connect to a Host listening on the other end of `channel`. Safe to call in a
 // worker loaded with either `import` or `importScripts`.
 // -----------------------------------------------------------------------------
-export function connect(channel: Channel): Client {
+export function connect(channel: Channel, options: ClientOptions = {}): Client {
+    const on_error =
+        options.onerror ??
+        ((error: unknown) => {
+            // a set has no caller to reject, so say something rather than
+            // letting the failure disappear
+            console.error('mitty: setting a remote property failed', error);
+        });
     let rpc_id = 0;
     let callback_id = 0;
     const pending = new Map<
@@ -78,7 +94,7 @@ export function connect(channel: Channel): Client {
             if (chain) {
                 if (chain.ops.length || typeof chain.root.object !== 'number') {
                     throw new TypeError(
-                        'mitty: cannot send an unresolved remote chain - await it first',
+                        'mitty: cannot send an unresolved remote chain - await it first'
                     );
                 }
                 // a handle can go back to the host, which swaps it for the
@@ -139,7 +155,11 @@ export function connect(channel: Channel): Client {
             void run_callback(data);
             return;
         }
-        if (typeof data.id !== 'number') {
+        // only a reply settles a pending call. On a shared bus this client
+        // also overhears the requests other peers send, and those carry an id
+        // from a counter of their own - one could match a call in flight here
+        // and settle it with a value that was never meant for it
+        if (typeof data.id !== 'number' || Array.isArray(data.ops)) {
             return;
         }
         const entry = pending.get(data.id);
@@ -211,6 +231,22 @@ export function connect(channel: Channel): Client {
                 }
                 return make_chain(root, [...ops, { type: 'get', key }]);
             },
+            // An assignment cannot be awaited. This trap has to answer now,
+            // and `a.b = c` evaluates to `c` in JavaScript, never to a
+            // promise. So a set is the one thing mitty sends without being
+            // asked to - the alternative is for it never to be sent at all.
+            //
+            // Trapping it is also what keeps `el.name = x` working: the
+            // chain's target is a function, and a function's own `name` and
+            // `length` are read-only, so an untrapped assignment throws.
+            set(_target, key, value) {
+                if (typeof key === 'string') {
+                    void call(root, [...ops, { type: 'set', key, value }]).catch(
+                        on_error
+                    );
+                }
+                return true;
+            }
         });
     }
 
@@ -239,6 +275,6 @@ export function connect(channel: Channel): Client {
             pending.clear();
             callbacks.clear();
             callback_ids.clear();
-        },
+        }
     };
 }

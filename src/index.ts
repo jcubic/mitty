@@ -13,10 +13,11 @@ export type {
     ChannelEvent,
     ChannelListener,
     Client,
+    ClientOptions,
     ErrorMarker,
     FunctionMarker,
     Marker,
     ObjectMarker,
     Op,
-    Remote,
+    Remote
 } from './types';

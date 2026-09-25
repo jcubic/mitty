@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org).
 
+## [0.4.0] - 2026-09-25
+
+### Features
+
+- `remote.key = value` now sets the property on the host. mitty sends it at once, because an assignment cannot wait.
+- New `onerror` option for `connect()`. A failed assignment goes there. The default writes to the console.
+
+### Bugfix
+
+- A host ignores a reply that it hears by chance. Two peers on one bus answered each other without end before this.
+- A client ignores a request that it hears by chance. Such a request can hold the same id as a call in progress.
+- `remote.name = x` and `remote.length = x` now work. A chain has a function target, and those keys are read-only.
+
 ## [0.3.0] - 2026-09-23
 
 ### Breaking

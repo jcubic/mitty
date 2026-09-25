@@ -5,14 +5,14 @@ import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
     {
-        ignores: ['node_modules/**', 'dist/**', 'coverage/**'],
+        ignores: ['node_modules/**', 'dist/**', 'coverage/**']
     },
     js.configs.recommended,
     ...tseslint.configs.recommended,
     {
         languageOptions: {
-            globals: { ...globals.node, ...globals.browser },
-        },
+            globals: { ...globals.node, ...globals.browser }
+        }
     },
     {
         // the example workers run in a worker scope and reach for globals the
@@ -24,9 +24,9 @@ export default tseslint.config(
                 ...globals.worker,
                 Mitty: 'readonly',
                 jQuery: 'readonly',
-                $: 'readonly',
-            },
-        },
+                $: 'readonly'
+            }
+        }
     },
-    prettier,
+    prettier
 );

@@ -15,7 +15,7 @@ export const HANDLE = Symbol.for('@jcubic/mitty/handle');
 export function encode_error(error: Error): ErrorMarker {
     return {
         __type__: 'error',
-        __data__: [error.name, error.message, error.stack ?? null],
+        __data__: [error.name, error.message, error.stack ?? null]
     };
 }
 
