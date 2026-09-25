@@ -10,7 +10,7 @@ import {
     invalid_handle,
     is_error_marker,
     is_function_marker,
-    is_object_marker,
+    is_object_marker
 } from './protocol';
 import type { Channel, ChannelListener, ObjectMarker, Op } from './types';
 import { has_methods } from './values';
@@ -223,7 +223,13 @@ export class Host {
             return;
         }
 
-        if (typeof data.id !== 'number') {
+        // A reply carries an id just as a request does, so the id alone does
+        // not make this a request - `ops` does. It matters on a bus every peer
+        // hears (sysend, or a BroadcastChannel with more than two ends): a
+        // host overhears the replies meant for another peer's client, and
+        // answering one draws an error carrying the same id, which the other
+        // host answers in turn. Two tabs, one click, no end.
+        if (typeof data.id !== 'number' || !Array.isArray(data.ops)) {
             return;
         }
 
@@ -256,13 +262,25 @@ export class Host {
                 object = value;
                 value = (value as Record<string, unknown> | null | undefined)?.[op.key];
                 label += `.${op.key}`;
+            } else if (op.type === 'set') {
+                if (value === null || value === undefined) {
+                    throw new TypeError(
+                        `mitty: cannot set ${label}.${op.key} of ${String(value)}`
+                    );
+                }
+                (value as Record<string, unknown>)[op.key] = op.value;
+                label += `.${op.key}`;
+                // an assignment evaluates to the value assigned, and leaves
+                // nothing for a following call to bind to
+                value = op.value;
+                object = undefined;
             } else {
                 if (typeof value !== 'function') {
                     throw new TypeError(`mitty: ${label} is not a function`);
                 }
                 value = await (value as (...args: unknown[]) => unknown).apply(
                     object,
-                    op.args,
+                    op.args
                 );
                 // a result is not bound to anything until it is read off
                 // something else, so the next call has no receiver

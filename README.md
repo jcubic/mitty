@@ -61,7 +61,7 @@ const { require } = Mitty.connect(new BroadcastChannel('my-app'));
 
 The two cannot share one URL: `importScripts()` only accepts a classic script and
 rejects a file containing `export`, while `import` needs those exports. Pin a version
-with `@` when you want the URL to stay put, e.g. `@jcubic/mitty@0.3.0`.
+with `@` when you want the URL to stay put, e.g. `@jcubic/mitty@0.4.0`.
 
 ## Quick start
 
@@ -72,7 +72,7 @@ import { Host } from '@jcubic/mitty';
 
 const modules = {
   $: () => jQuery,
-  term: () => $('.terminal').terminal(),
+  term: () => $('.terminal').terminal()
 };
 
 const channel = new BroadcastChannel('my-app');
@@ -84,7 +84,7 @@ const host = new Host({
       return modules[name]();
     }
     return null;
-  },
+  }
 });
 
 const worker = new Worker('./worker.js');
@@ -164,9 +164,10 @@ step appends to a list of operations held in the worker:
 [
   { type: 'call', args: ['#list'] },
   { type: 'get', key: 'find' },
-  { type: 'call', args: ['li'] },
+  { type: 'call', args: ['li'] }
   // ...
 ];
+// and an assignment records { type: 'set', key: 'color', value: 'red' }
 ```
 
 Nothing is sent until you attach `then`, `catch` or `finally` — usually by awaiting the
@@ -198,10 +199,48 @@ const console = {
   log: async (...args) => {
     await stdout.writeln(args.join(' '));
     await stdout.flush();
-  },
+  }
 };
 
 console.log('this works'); // the writes still happen
+```
+
+### Setting a property
+
+Assignment is the one exception to everything above — it is sent **without** being awaited,
+because it cannot be awaited:
+
+```js
+const body = await require('document').querySelector('body');
+
+body.style.color = 'rebeccapurple'; // sent straight away
+body.title = 'set from another tab';
+```
+
+`a.b = c` evaluates to `c` in JavaScript, and the proxy has to answer the assignment
+immediately, so there is no promise for you to hold. Two things follow from that.
+
+You get no confirmation. Read the value back if you need to know it arrived — ordering is
+kept, so a set already on the wire is applied before a read sent after it:
+
+```js
+body.style.color = 'red';
+await body.style.color; // 'red'
+```
+
+And a failed set has no caller to reject. It goes to `onerror` instead, which reports on
+the console unless you say otherwise:
+
+```js
+const { require } = connect(channel, {
+  onerror: error => report(error)
+});
+```
+
+If you would rather have a promise, call the setter the object already has:
+
+```js
+await body.style.setProperty('color', 'red');
 ```
 
 ## What travels and what stays
@@ -250,7 +289,7 @@ new Host({
   serialize(value) {
     // send a summary instead of a handle
     return value instanceof Stat ? { type: value.type } : value;
-  },
+  }
 });
 ```
 
@@ -364,7 +403,11 @@ its prototype chain below `Object.prototype`. Arrays, typed arrays, anything wit
 `toJSON()`, functions and primitives are all `false`. Getters are read as descriptors, so
 asking never invokes one.
 
-### `connect(channel)`
+### `connect(channel, options?)`
+
+| option    | type              | description                                                                                      |
+| --------- | ----------------- | ------------------------------------------------------------------------------------------------ |
+| `onerror` | `(error) => void` | Where a failed property assignment goes, since none can be awaited. Defaults to `console.error`. |
 
 Returns a client:
 
@@ -403,6 +446,11 @@ Messages on the wire are JSON strings, so a channel only has to carry text.
 - **Functions returned from the host are dropped**, as they would be by `JSON.stringify`.
   Expose them through a handle instead.
 - **Handles are not garbage collected** — see [Handles and memory](#handles-and-memory).
+- **One channel carries one conversation.** Request ids start at 1 on every client, so two
+  clients sharing a bus (sysend, a `BroadcastChannel` with more than two ends) cannot tell
+  their replies apart. A host ignores traffic that is not addressed to it as a request, so
+  peers no longer answer each other without end, but the ids still overlap — give each pair
+  of ends a channel of its own.
 
 ## Example
 

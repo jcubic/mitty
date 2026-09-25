@@ -53,8 +53,14 @@ export type Marker = FunctionMarker | ObjectMarker | ErrorMarker;
 // A chain step recorded on the client and replayed on the host. `$('li').text()`
 // is [{ type: 'call', args: ['li'] }, { type: 'get', key: 'text' },
 // { type: 'call', args: [] }] - one message for the whole chain.
+//
+// A `set` only ever comes last: `a.b = c` evaluates to `c` in JavaScript, so
+// there is no proxy left to record another step onto.
 // -----------------------------------------------------------------------------
-export type Op = { type: 'get'; key: string } | { type: 'call'; args: unknown[] };
+export type Op =
+    | { type: 'get'; key: string }
+    | { type: 'set'; key: string; value: unknown }
+    | { type: 'call'; args: unknown[] };
 
 // -----------------------------------------------------------------------------
 // The proxy handed back by require(). Every property access and call returns
@@ -66,11 +72,18 @@ export interface Remote {
     (...args: any[]): Remote;
     then<R1 = any, R2 = never>(
         onfulfilled?: ((value: any) => R1 | PromiseLike<R1>) | null,
-        onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | null,
+        onrejected?: ((reason: any) => R2 | PromiseLike<R2>) | null
     ): Promise<R1 | R2>;
     catch<R = any>(onrejected?: ((reason: any) => R | PromiseLike<R>) | null): Promise<R>;
     finally(onfinally?: (() => void) | null): Promise<any>;
     [key: string]: any;
+}
+
+export interface ClientOptions {
+    // Where a failed property assignment goes. `remote.key = value` cannot be
+    // awaited, so there is no caller to reject - without this a failure would
+    // be silent. Defaults to reporting on the console.
+    onerror?(error: unknown): void;
 }
 
 export interface Client {

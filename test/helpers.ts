@@ -1,5 +1,5 @@
 import { Host, connect } from '../src/index';
-import type { Client, HostOptions } from '../src/index';
+import type { Client, ClientOptions, HostOptions } from '../src/index';
 
 let counter = 0;
 const cleanups: Array<() => void> = [];
@@ -8,7 +8,10 @@ const cleanups: Array<() => void> = [];
 // name. In Node (as in the browser) a channel never receives its own messages
 // but does receive the other endpoint's, so this is a faithful stand-in for
 // main-thread <-> worker without spawning a worker.
-export function pair(options: Omit<HostOptions, 'channel'>): {
+export function pair(
+    options: Omit<HostOptions, 'channel'>,
+    client_options: ClientOptions = {}
+): {
     host: Host;
     client: Client;
 } {
@@ -16,7 +19,7 @@ export function pair(options: Omit<HostOptions, 'channel'>): {
     const host_channel = new BroadcastChannel(name);
     const client_channel = new BroadcastChannel(name);
     const host = new Host({ channel: host_channel, ...options });
-    const client = connect(client_channel);
+    const client = connect(client_channel, client_options);
     cleanups.push(() => {
         host.close();
         client.close();
@@ -36,6 +39,6 @@ export function cleanup(): void {
 // a single module under a fixed name, the shape most tests need
 export function module_pair(name: string, value: unknown) {
     return pair({
-        resolve: (requested: string) => (requested === name ? value : null),
+        resolve: (requested: string) => (requested === name ? value : null)
     });
 }

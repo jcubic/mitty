@@ -3,6 +3,7 @@
   "tabWidth": 4,
   "printWidth": 90,
   "arrowParens": "avoid",
+  "trailingComma": "none",
   "overrides": [
     { "files": ["*.yml", "*.yaml", "*.json", "*.md"], "options": { "tabWidth": 2 } }
   ]

@@ -63,7 +63,7 @@ describe('has_methods', () => {
         const value = {
             get label() {
                 return 'x';
-            },
+            }
         };
         expect(has_methods(value)).toBe(false);
     });
@@ -74,7 +74,7 @@ describe('has_methods', () => {
             get boom() {
                 read++;
                 throw new Error('should not be read');
-            },
+            }
         };
         expect(() => has_methods(value)).not.toThrow();
         expect(read).toBe(0);

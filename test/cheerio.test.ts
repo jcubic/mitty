@@ -39,7 +39,7 @@ describe('cheerio over the channel', () => {
                     return this.remote(value);
                 }
                 return value;
-            },
+            }
         }));
     });
 

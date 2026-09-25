@@ -28,5 +28,5 @@ export default defineConfig({
     dts: { banner },
     sourcemap: true,
     clean: true,
-    banner: { js: banner },
+    banner: { js: banner }
 });
