@@ -16,6 +16,9 @@
 
 </div>
 
+Mitty: A transport-agnostic proxy RPC for executing object chains from any isolated
+context (Workers, Tabs, or Servers).
+
 Use objects that only exist on the main thread — DOM nodes, jQuery objects, class
 instances with methods, or anything that is inaccessible from inside a Web/Service Worker.
 
