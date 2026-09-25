@@ -89,6 +89,39 @@ describe('setting a property', () => {
         await element.style.setProperty('color', 'green');
         expect(body.style.color).toBe('green');
     });
+
+    // the host walks a set and sends nothing back. Returning the assigned
+    // value would serialize it, and anything with methods in it becomes a
+    // handle the client never receives - so nothing can ever release it
+    it('does not register a handle for the assigned value', async () => {
+        const target: Record<string, unknown> = {};
+        const { host, client } = pair({ resolve: () => target });
+        client.require('m').handler = { run: () => 1 };
+        await vi.waitUntil(() => target.handler !== undefined);
+        // the first handle a host hands out is #1, and there should be none
+        expect(host.release(1)).toBe(false);
+    });
+});
+
+// a set goes out without anyone awaiting it, so nothing about the assignment
+// itself keeps a later read from reaching the host first
+describe('a read after a set', () => {
+    it('sees the value the set wrote, even when resolve() is async', async () => {
+        const target = { color: 'black' };
+        let first = true;
+        const { client } = pair({
+            resolve: async () => {
+                // the first message in waits longer than the second, which is
+                // all it takes for the order to come apart
+                const wait = first ? 30 : 0;
+                first = false;
+                await new Promise(resolve => setTimeout(resolve, wait));
+                return target;
+            }
+        });
+        client.require('css').color = 'red';
+        expect(await client.require('css').color).toBe('red');
+    });
 });
 
 describe('a set that fails', () => {
@@ -113,5 +146,22 @@ describe('a set that fails', () => {
         await vi.waitUntil(() => spy.mock.calls.length > 0);
         expect(String(spy.mock.calls[0])).toMatch(/cannot set/i);
         spy.mockRestore();
+    });
+
+    // onerror belongs to the caller and can throw in its own right. The
+    // rejection that leaves behind has nobody to catch it
+    it('survives a handler that throws', async () => {
+        const { client } = pair(
+            { resolve: () => ({ nothing: null }) },
+            {
+                onerror: () => {
+                    throw new Error('the handler itself is broken');
+                }
+            }
+        );
+        client.require('m').nothing.oops = 1;
+        await new Promise(resolve => setTimeout(resolve, 60));
+        // still usable after its handler blew up, and no rejection was left
+        expect(await client.require('m').nothing).toBe(null);
     });
 });
