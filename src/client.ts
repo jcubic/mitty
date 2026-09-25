@@ -176,7 +176,7 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
 
     channel.addEventListener('message', listener);
 
-    function call(root: Root, ops: Op[]): Promise<unknown> {
+    function send(root: Root, ops: Op[]): Promise<unknown> {
         return new Promise((resolve, reject) => {
             const id = ++rpc_id;
             let payload: string;
@@ -191,6 +191,34 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             pending.set(id, { resolve, reject });
             channel.postMessage(payload);
         });
+    }
+
+    // A set goes out without anyone awaiting it, so on its own nothing stops a
+    // read issued afterwards from reaching the host first - every message is
+    // handled in a task of its own there, and a resolve() that yields is
+    // enough for the second to finish before the first. So while a set is in
+    // flight the requests behind it wait for it, which is what lets a read
+    // after a set see what the set wrote. With no set outstanding this costs
+    // nothing: the request goes straight out.
+    let in_flight: Promise<unknown> | null = null;
+
+    function call(root: Root, ops: Op[]): Promise<unknown> {
+        const dispatch = () => send(root, ops);
+        const result = in_flight ? in_flight.then(dispatch, dispatch) : dispatch();
+        if (ops[ops.length - 1]?.type === 'set') {
+            const settled = result.then(
+                () => {},
+                () => {}
+            );
+            in_flight = settled;
+            void settled.then(() => {
+                // unless a later set has taken over the queue in the meantime
+                if (in_flight === settled) {
+                    in_flight = null;
+                }
+            });
+        }
+        return result;
     }
 
     // -------------------------------------------------------------------------
@@ -241,9 +269,13 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             // `length` are read-only, so an untrapped assignment throws.
             set(_target, key, value) {
                 if (typeof key === 'string') {
-                    void call(root, [...ops, { type: 'set', key, value }]).catch(
-                        on_error
-                    );
+                    void call(root, [...ops, { type: 'set', key, value }])
+                        .catch(on_error)
+                        .catch(() => {
+                            // onerror belongs to the caller and can throw. The
+                            // rejection it leaves has nowhere left to go, and
+                            // an unhandled one would take the process down
+                        });
                 }
                 return true;
             }

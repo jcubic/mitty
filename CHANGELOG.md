@@ -13,6 +13,9 @@ Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic 
 
 ### Bugfix
 
+- A request waits for a set that is in flight. A read could pass the write in front of it when `resolve()` was async.
+- The reply to a set holds no value. It returned the assigned value, which made a handle that nothing could release.
+- A throw from `onerror` no longer leaves a rejection with no handler.
 - A host ignores a reply that it hears by chance. Two peers on one bus answered each other without end before this.
 - A client ignores a request that it hears by chance. Such a request can hold the same id as a call in progress.
 - `remote.name = x` and `remote.length = x` now work. A chain has a function target, and those keys are read-only.

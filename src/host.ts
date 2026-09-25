@@ -270,9 +270,12 @@ export class Host {
                 }
                 (value as Record<string, unknown>)[op.key] = op.value;
                 label += `.${op.key}`;
-                // an assignment evaluates to the value assigned, and leaves
-                // nothing for a following call to bind to
-                value = op.value;
+                // the reply carries nothing back. A set is always the last
+                // step - `a.b = c` evaluates to `c`, so no proxy is left to
+                // chain onto - and sending the assigned value back would
+                // serialize it, handing out a handle for anything with
+                // methods in it that nothing would ever release
+                value = undefined;
                 object = undefined;
             } else {
                 if (typeof value !== 'function') {
