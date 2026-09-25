@@ -7,5 +7,5 @@ self.addEventListener(
     event => {
         self.demo(Mitty.connect, event.data.channel);
     },
-    { once: true },
+    { once: true }
 );

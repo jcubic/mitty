@@ -67,7 +67,7 @@
                 log: () => ({
                     write(message) {
                         $('#log').append(document.createTextNode(message + '\n'));
-                    },
+                    }
                 }),
                 util: () => ({
                     // takes a callback that lives in the worker
@@ -77,8 +77,8 @@
                             out.push(await fn(item));
                         }
                         return out;
-                    },
-                }),
+                    }
+                })
             };
 
             let seq = 0;
@@ -97,7 +97,7 @@
                             return modules[name]();
                         }
                         return null;
-                    },
+                    }
                     // a jQuery object wraps DOM nodes and cannot be
                     // structured-cloned, but nothing here has to say so: it
                     // has methods, so mitty keeps it and hands out a handle
