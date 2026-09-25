@@ -46,8 +46,6 @@ transport-agnostic. You can use it to bridge any two contexts capable of sending
   states directly from the server or a peer. It works both ways; you can execute browser
   objects from the server or the server from the browser.
 
-See [examples](https://github.com/jcubic/mitty/tree/master/example).
-
 ## Installation
 
 ```bash
@@ -475,19 +473,63 @@ Messages on the wire are JSON strings, so a channel only has to carry text.
   peers no longer answer each other without end, but the ids still overlap — give each pair
   of ends a channel of its own.
 
-## Example
+## Examples
 
-A runnable page that drives jQuery from a worker, in both the `importScripts` and
-`import` styles, lives in
-[`example/`](https://github.com/jcubic/mitty/tree/master/example):
+All of them live in [`example/`](https://github.com/jcubic/mitty/tree/master/example) and
+run against the local build, so `npm run build` first.
+
+### [`example/worker/`](https://github.com/jcubic/mitty/tree/master/example/worker)
+
+A page that drives jQuery from a worker, in both the `importScripts` and `import` styles.
 
 ```bash
-npm install
-npm run build
+npm install && npm run build
 npx serve .
 ```
 
-then open `/example/`.
+then open `/example/worker/`.
+
+### [`example/cross-tab/`](https://github.com/jcubic/mitty/tree/master/example/cross-tab)
+
+One tab reaching into another over [sysend](https://github.com/jcubic/sysend), driving
+both jQuery and plain DOM. Served the same way; open it in two tabs.
+
+### [`example/node/`](https://github.com/jcubic/mitty/tree/master/example/node)
+
+**cheerio on the server, driven from the browser over a WebSocket.** No markup reaches the
+page and cheerio never runs there — the browser writes `$('li').first().text()` and the
+chain is replayed in Node.
+
+```bash
+npm run build          # in the repo root
+cd example/node
+npm install
+npm start
+```
+
+then open <http://localhost:3000>.
+
+A socket already is a two-way stream of messages, so the only thing between it and a
+`Channel` is the name:
+
+```js
+const channel = socket => ({
+  postMessage: message => socket.send(message),
+  addEventListener: (type, listener) => socket.addEventListener(type, listener),
+  removeEventListener: (type, listener) => socket.removeEventListener(type, listener)
+});
+```
+
+That same adapter works on both ends — `ws` in Node and the browser's `WebSocket` both
+carry `addEventListener`. The example gives every connection its own `Host` and its own
+document, calls `host.close()` when the socket drops, and covers handles, callbacks,
+arity trimming and error propagation; see its
+[README](https://github.com/jcubic/mitty/tree/master/example/node#readme).
+
+> [!WARNING]
+> Whatever `resolve()` answers is fully reachable by whoever is on the other end. Handing
+> out `$` lets a client run any chain against that document. Over a socket that is your
+> security boundary — return a narrow object of the operations you mean to allow.
 
 ## Development
 
