@@ -1,0 +1,78 @@
+<!doctype html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+    <head>
+        <meta charset="utf-8" />
+        <title>Mitty: Cross-Tab RPC Communication</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    </head>
+    <body>
+        <p>
+            Open this page in two tabs, and click the button to change the background of
+            other tab.
+        </p>
+        <button id="set">Change background</button>
+        <button id="restore">Restore background</button>
+        <script type="module">
+            import $ from 'https://esm.sh/jquery';
+            import sysend from 'https://esm.sh/sysend';
+            import { connect, Host } from 'https://cdn.jsdelivr.net/npm/@jcubic/mitty';
+
+            class SysendChannel {
+                addEventListener(type, listener) {
+                    sysend.on(type, listener);
+                }
+                removeEventListener(type, listener) {
+                    sysend.off(type, listener);
+                }
+                postMessage(message) {
+                    sysend.broadcast('message', { data: message });
+                }
+            }
+
+            const channel = new SysendChannel();
+
+            const host = new Host({
+                channel,
+                resolve(name) {
+                    // remote values stay on the other side of the channel
+                    if (name === '$') {
+                        return $;
+                    }
+                    if (name === 'document') {
+                        return document;
+                    }
+                    return null;
+                }
+            });
+
+            var { require } = connect(channel);
+
+            let style = {};
+
+            // jQuery
+            $('#set').on('click', async () => {
+                const $ = await require('$');
+                if (!style.background && !style.color) {
+                    style.background = await $('body').css('background-color');
+                    style.color = await $('body').css('color');
+                }
+                await $('body').css('background', '#464646').css('color', '#ccc');
+            });
+
+            // Vanilla JavaScript
+            document.querySelector('#restore').addEventListener('click', async () => {
+                try {
+                    const document = await require('document');
+                    if (style.background && style.color) {
+                        const { color, background } = style;
+                        const body = await document.querySelector('body');
+                        body.style.color = color;
+                        await body.style.setProperty('background', background);
+                    }
+                } catch (e) {
+                    console.log(e.message);
+                }
+            });
+        </script>
+    </body>
+</html>
