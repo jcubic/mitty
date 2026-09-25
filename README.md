@@ -31,6 +31,20 @@ const $ = require('$');
 await $('#list').find('li').first().text(); // one message, not four
 ```
 
+## Universal Communication
+
+While originally designed for Web/Service Workers, Mitty's underlying architecture is
+transport-agnostic. You can use it to bridge any two contexts capable of sending messages:
+
+- Web Workers / Service Workers: Offload heavy logic while keeping DOM access.
+- Cross-Tab Communication: Control UI or trigger actions in another browser tab (e.g., via
+  [Sysend](https://github.com/jcubic/sysend) or BroadcastChannel).
+- Client-Server (WebSockets / WebRTC): Execute commands or query specific main-thread
+  states directly from the server or a peer. It works both ways; you can execute browser
+  objects from the server or the server from the browser.
+
+See [examples](https://github.com/jcubic/mitty/tree/master/example).
+
 ## Installation
 
 ```bash
@@ -72,7 +86,7 @@ import { Host } from '@jcubic/mitty';
 
 const modules = {
   $: () => jQuery,
-  term: () => $('.terminal').terminal()
+  document: () => document
 };
 
 const channel = new BroadcastChannel('my-app');
@@ -103,12 +117,13 @@ bundler, or straight from the CDN:
 
 ```js
 import { connect } from '@jcubic/mitty';
-// or: from 'https://cdn.jsdelivr.net/npm/@jcubic/mitty'
+// or
+import { connect } from 'https://cdn.jsdelivr.net/npm/@jcubic/mitty';
 
 const { require } = connect(new BroadcastChannel('my-app'));
 
 const $ = require('$');
-await $('.terminal').terminal().echo('Hello from a worker');
+await $('body').find('p').css('color', 'navy');
 ```
 
 Or with `importScripts()`, in a classic worker:
@@ -134,20 +149,24 @@ const source = `importScripts(${JSON.stringify(mitty)}); /* ... */`;
 const worker = new Worker(URL.createObjectURL(new Blob([source])));
 ```
 
-## One channel per worker
+## Universal Channel Interface
 
-Both ends take a channel rather than creating one, so you decide what the two sides talk
-over and how many conversations there are. Request ids are per connection and start at 1,
-so two workers sharing a channel name will see each other's replies and resolve the wrong
-calls. Give every worker its own channel:
+The channel doesn't have to be `BroacastChannel`. The channel only needs to implement this interface:
+
+```typescript
+interface Channel {
+  postMessage(message: string): void;
+  addEventListener(type: 'message', listener: ChannelListener): void;
+  removeEventListener(type: 'message', listener: ChannelListener): void;
+}
+```
+
+Web worker already specifies the interface, so if you want one channel per worker you can use this code:
 
 ```js
-let seq = 0;
-
 function spawn(url) {
-  const name = `my-app-${++seq}`;
-  const host = new Host({ channel: new BroadcastChannel(name), resolve });
   const worker = new Worker(url);
+  const host = new Host({ channel: worker, resolve });
   worker.postMessage({ channel: name }); // tell the worker which one to join
   return { host, worker };
 }
@@ -155,7 +174,7 @@ function spawn(url) {
 
 A channel is never closed by this library — whoever created it owns it.
 
-## How a chain becomes one message
+## How a Chain Becomes One Message
 
 `$('#list').find('li').first().text()` does not talk to the main thread four times. Each
 step appends to a list of operations held in the worker:
@@ -205,7 +224,7 @@ const console = {
 console.log('this works'); // the writes still happen
 ```
 
-### Setting a property
+### Setting a Property
 
 Assignment is the one exception to everything above — it is sent **without** being awaited,
 because it cannot be awaited:
@@ -220,8 +239,9 @@ body.title = 'set from another tab';
 `a.b = c` evaluates to `c` in JavaScript, and the proxy has to answer the assignment
 immediately, so there is no promise for you to hold. Two things follow from that.
 
-You get no confirmation. Read the value back if you need to know it arrived — ordering is
-kept, so a set already on the wire is applied before a read sent after it:
+You get no confirmation. Read the value back if you need to know it arrived — a request
+made while a set is in flight waits for that set to land, so a read never overtakes the
+write in front of it:
 
 ```js
 body.style.color = 'red';
