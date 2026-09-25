@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>Mitty over a WebSocket — cheerio on the server</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+            body {
+                font:
+                    15px/1.5 system-ui,
+                    sans-serif;
+                max-width: 46rem;
+                margin: 2rem auto;
+                padding: 0 1rem;
+                color: #222;
+            }
+            h1 {
+                font-size: 1.3rem;
+            }
+            code,
+            pre,
+            input {
+                font-family: ui-monospace, monospace;
+            }
+            pre {
+                background: #f4f4f5;
+                padding: 0.75rem;
+                overflow-x: auto;
+                border-radius: 4px;
+            }
+            .row {
+                display: flex;
+                gap: 0.5rem;
+                margin: 0.75rem 0;
+            }
+            input {
+                flex: 1;
+                padding: 0.4rem;
+            }
+            button {
+                padding: 0.4rem 0.8rem;
+                cursor: pointer;
+            }
+            #out {
+                min-height: 4rem;
+                white-space: pre-wrap;
+            }
+            .hint {
+                color: #666;
+                font-size: 0.9em;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>cheerio on the server, driven from this page</h1>
+        <p class="hint">
+            No markup is sent to the browser and cheerio never runs here. Every chain
+            below is recorded by a proxy, sent over one WebSocket message, and replayed
+            against a document that only exists in Node.
+        </p>
+
+        <div class="row">
+            <input id="selector" value="li.item" aria-label="CSS selector" />
+            <button id="query">$(selector)</button>
+            <button id="mark">mark the first item</button>
+            <button id="reset">reload the page</button>
+        </div>
+
+        <pre id="out">connecting…</pre>
+
+        <p class="hint">The document as the server currently holds it:</p>
+        <pre id="html">…</pre>
+
+        <script type="module">
+            import { connect } from '/mitty.js';
+
+            const out = document.getElementById('out');
+            const html = document.getElementById('html');
+            const log = text => {
+                out.textContent = text;
+            };
+
+            const socket = new WebSocket(`ws://${location.host}`);
+            await new Promise(resolve => socket.addEventListener('open', resolve));
+
+            // the same three members mitty asks of any channel; a socket needs
+            // only the rename from send() to postMessage()
+            const { require } = connect({
+                postMessage: message => socket.send(message),
+                addEventListener: (type, listener) =>
+                    socket.addEventListener(type, listener),
+                removeEventListener: (type, listener) =>
+                    socket.removeEventListener(type, listener)
+            });
+
+            const $ = require('$');
+
+            async function show_html() {
+                html.textContent = (await $.html()).trim();
+            }
+
+            async function report(work) {
+                try {
+                    log(await work());
+                } catch (error) {
+                    // an error keeps its name, message and the server's stack
+                    log(`${error.name}: ${error.message}`);
+                }
+            }
+
+            document.getElementById('query').addEventListener('click', () => {
+                const selector = document.getElementById('selector').value;
+                report(async () => {
+                    // one message for the whole chain, not one per step
+                    const count = await $(selector).length;
+                    if (!count) {
+                        return `$(${JSON.stringify(selector)}) matched nothing`;
+                    }
+                    const text = await $(selector).first().text();
+                    const upper = await $(selector).first().text().toUpperCase();
+                    // a cheerio object has methods, so it stays on the server
+                    // and arrives as a handle - this calls back into it
+                    const node = await $(selector).first();
+                    const tag = await node.prop('tagName');
+
+                    // a callback runs in the browser, called from Node. Declare
+                    // only the arguments you want: cheerio passes the element
+                    // too, and a DOM node cannot cross the socket
+                    const seen = [];
+                    await $(selector).each(index => {
+                        seen.push(index);
+                    });
+
+                    return [
+                        `matched:   ${count}`,
+                        `first:     ${text}`,
+                        `chained:   ${upper}   (.toUpperCase() ran on the server)`,
+                        `handle:    <${String(tag).toLowerCase()}>`,
+                        `callback:  each() called back ${seen.length} times`
+                    ].join('\n');
+                });
+            });
+
+            document.getElementById('mark').addEventListener('click', () => {
+                report(async () => {
+                    await $('li.item').first().addClass('done');
+                    await $('h1').text('Groceries (edited from the browser)');
+                    await show_html();
+                    return 'the server-side document changed — see below';
+                });
+            });
+
+            document.getElementById('reset').addEventListener('click', () => {
+                location.reload();
+            });
+
+            const server = require('server');
+            log(
+                [
+                    `connected to node ${await server.node} (pid ${await server.pid})`,
+                    `server time: ${await server.now()}`,
+                    '',
+                    'pick a selector and press the button'
+                ].join('\n')
+            );
+            await show_html();
+        </script>
+    </body>
+</html>

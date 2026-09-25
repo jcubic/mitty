@@ -1,0 +1,19 @@
+{
+  "name": "node",
+  "version": "0.1.0",
+  "description": "Mitty over a WebSocket: cheerio on the server, driven from the browser",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "Jakub T. Jankiewicz <jcubic@jcubic.pl> (https://jakub.jankiewicz.org/)",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@jcubic/mitty": "file:../..",
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "ws": "^8.21.3"
+  }
+}
