@@ -8,5 +8,5 @@ self.addEventListener(
     event => {
         self.demo(connect, event.data.channel);
     },
-    { once: true },
+    { once: true }
 );
