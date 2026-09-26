@@ -44,7 +44,7 @@ transport-agnostic. You can use it to bridge any two contexts capable of sending
   [Sysend](https://github.com/jcubic/sysend) or BroadcastChannel).
 - Client-Server (WebSockets / WebRTC): Execute commands or query specific main-thread
   states directly from the server or a peer. It works both ways; you can execute browser
-  objects from the server or the server from the browser.
+  functions from the server or the server from the browser.
 
 ## Installation
 
