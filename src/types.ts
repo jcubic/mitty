@@ -44,7 +44,10 @@ export interface FunctionMarker {
 
 export interface ObjectMarker {
     __type__: 'object';
-    __data__: { handle: number };
+    // `repr` travels Host to Client only, and only when the handle is minted:
+    // a string form the host built from the real object. A client referring
+    // back to a handle sends the integer alone.
+    __data__: { handle: number; repr?: string };
 }
 
 export interface ErrorMarker {

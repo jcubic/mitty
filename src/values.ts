@@ -69,3 +69,28 @@ const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 export function safe_key(key: string): boolean {
     return !UNSAFE_KEYS.has(key);
 }
+
+// -----------------------------------------------------------------------------
+// The default `repr`: what a handle looks like when something asks the client
+// for a string. A handle has no data on the client side, so there is nothing
+// there to build a name from - this runs on the host, against the real object,
+// and the result travels with the handle.
+//
+// The constructor name is all a general rule can honestly offer. An
+// application that knows its own types should say so itself:
+//
+//     import { repr } from '@jcubic/mitty';
+//
+//     new Host({ channel, resolve, repr(value) {
+//         if (value instanceof $.fn.init) return `#<jQuery [${value.length}]>`;
+//         if (value instanceof Element) return `<${value.tagName} />`;
+//         return repr(value);   // this one, not the option - a method
+//     }});                      // shorthand does not bind its own name
+// -----------------------------------------------------------------------------
+export function repr(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+        return `#<${typeof value}>`;
+    }
+    const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
+    return `#<${typeof name === 'string' && name ? name : 'object'}>`;
+}

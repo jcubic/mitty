@@ -4,6 +4,21 @@ All notable changes to this project are documented in this file.
 
 Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org).
 
+## [Unreleased]
+
+### Features
+
+- New `repr` option on the host. It makes the string form of a value that stays behind a handle.
+- `String(handle)` and `` `${handle}` `` now give that string. Before, they threw an error.
+- The host makes the repr when it makes the handle, and sends the two together. A string form cannot wait.
+- New `repr()` export. It is the default, and gives `#<Selection>` from the name of the constructor.
+- An object marker can carry a `repr` member. See RO/RPC §6.1.1. The client never sends it back.
+
+- An argument that JSON cannot carry gives a mitty error. It names the argument and says what the value is.
+- The error keeps the JSON error on `cause`. A circular value points to the place that closes the circle.
+- New `is_remote()` export. It tells a chain from a function, which `typeof` cannot do.
+- A library that does not use mitty can make the same test. Read `Symbol.for('@jcubic/mitty/handle')`.
+
 ## [0.5.0] - 2026-09-27
 
 The wire format is now specified as [RO/RPC 1.0](https://rorpc.org/). Both ends must run 0.5.0.

@@ -6,7 +6,7 @@
  * emitting the wrong wire format is not interoperable with anything.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Host, connect, safe_key } from '../src/index';
+import { Host, connect, is_remote, safe_key } from '../src/index';
 import type { Channel, ChannelListener, HostOptions } from '../src/index';
 
 const VERSION = '1.0';
@@ -150,8 +150,48 @@ describe('§6 markers carry a named object', () => {
         const reply = last(replies);
         expect(reply.result).toEqual({
             __type__: 'object',
+            __data__: { handle: 1, repr: '#<Object>' }
+        });
+    });
+
+    it('§6.1.1 the Host builds repr, and the Client sends it back to no one', async () => {
+        const { client, requests } = wired({
+            resolve: () => ({
+                get: () => ({ run: () => 1 }),
+                same: (other: unknown) => typeof other === 'object'
+            }),
+            repr: () => '#<thing>'
+        });
+        const handle = await client.require('m').get();
+        expect(String(handle)).toBe('#<thing>');
+        await client.require('m').same(handle);
+        const request = frames(requests).filter(
+            frame => 'ops' in frame && frame.ops.length === 2
+        )[1];
+        // §6.1.1: Client to Host is the integer alone
+        expect(request.ops[1].args[0]).toEqual({
+            __type__: 'object',
             __data__: { handle: 1 }
         });
+    });
+
+    it('§6.1.1 a Client works against a Host that sends no repr', async () => {
+        // what a 1.0 Host looks like from here. The real host never answers,
+        // so the injected reply is the only one - and the chain has to be
+        // awaited before it is sent at all, hence the settle()
+        const { client, inject_reply } = wired({
+            resolve: () => ({ get: () => new Promise(() => {}) })
+        });
+        const pending = Promise.resolve(client.require('m').get());
+        await settle();
+        inject_reply({
+            rorpc: VERSION,
+            id: 1,
+            result: { __type__: 'object', __data__: { handle: 7 } }
+        });
+        const handle = await pending;
+        expect(is_remote(handle)).toBe(true);
+        expect(String(handle)).toBe('#<object>');
     });
 
     it('§6.2 a function marker names its callback and arity', async () => {

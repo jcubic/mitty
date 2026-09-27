@@ -477,6 +477,93 @@ await $('#list')
   .catch(error => report(error));
 ```
 
+Arguments travel the other way as JSON, so a value that is not plain data cannot be
+sent. A chain records whatever it is given and fails only when something awaits it, at
+which point the call rejects with what the value is and where it sits:
+
+```js
+await $('#list').add(back_reference); // refers to itself
+// mitty: cannot send ops.1.args.0 across the channel - a circular object with
+// constructor 'Selection' - it refers back to itself at ops.1.args.0.owner.
+// Only plain data, functions and remote handles can be sent; await a remote
+// chain first, and keep host-side objects behind handles.
+```
+
+The path counts the message, not your call, so `ops.1.args.0` is the first argument of
+the second recorded step. The original `JSON.stringify` error is kept on `error.cause`.
+
+### A library that mistakes a chain for a function
+
+A chain is a `Proxy` around a function, because any step in it may turn out to be a
+call. So `typeof chain === 'function'`, and a library that duck-types for a callable
+will treat it as one. jQuery Terminal does exactly this in `echo()`:
+
+```js
+if (typeof arg === 'function') {
+  value = arg.bind(self); // `self` is the terminal's own jQuery object
+}
+```
+
+That records `bind` as another step and puts a real jQuery selection in its arguments —
+a client-side object that cannot cross the channel, so the call rejects. Resolve the
+chain _before_ handing it to such a library:
+
+```js
+term.echo(await handle.toString()); // a string
+term.echo(handle.toString()); // a chain, and the trap above
+```
+
+Use [`is_remote(value)`](#is_remotevalue) to tell the two apart.
+
+### Printing a handle
+
+A handle stands for an object the worker never receives, so there is nothing on this side
+to build a name from. The host builds it instead, when it mints the handle, and it travels
+with it — which is what lets `String(handle)` answer at once:
+
+```js
+import { Host, repr } from '@jcubic/mitty';
+
+const host = new Host({
+  channel,
+  resolve,
+  repr(value) {
+    if (value instanceof jQuery.fn.init) {
+      return `#<jQuery [${value.length}]>`;
+    }
+    if (value instanceof Element) {
+      return `<${value.tagName.toLowerCase()} />`;
+    }
+    return repr(value); // the import, not this option - see below
+  }
+});
+```
+
+```js
+const node = await $('#list').get(0);
+`${node}`; // '<li />'
+term.echo(String(node)); // '<li />', with no round trip
+```
+
+`repr` runs on the host with the host as `this`, and must return a string. Without it the
+default is the exported [`repr()`](#reprvalue), which gives `#<HTMLLIElement>`.
+
+The option and the default share a name on purpose, and the call above is not recursion: a
+method shorthand does not bind its own name, so `repr(value)` inside it is the import. Write
+it as `repr: function repr(value) { ... }` and it _would_ call itself — use the shorthand.
+
+> [!NOTE]
+> The repr is built **once**, when the handle is minted, because `Symbol.toPrimitive` has
+> to answer synchronously and cannot wait for a round trip. It is a label for a person to
+> read, not live data — if the object changes afterwards, the repr does not.
+
+Coercing a chain that has _not_ run is still an error, and says so:
+
+```js
+`${$('#list')}`;
+// mitty: cannot make a string from a remote chain that has not run - await it first
+```
+
 ## API
 
 ### `new Host(options)`
@@ -490,6 +577,7 @@ await $('#list')
 | `remote`      | `(value) => boolean` | Which values stay behind a handle. Defaults to `has_methods`. Replaces the default rather than adding to it. |
 | `get`         | `(key) => boolean`   | May a chain read this key? Defaults to `safe_key`. Replaces it rather than adding to it.                     |
 | `set`         | `(key) => boolean`   | May a chain write this key? Defaults to `safe_key`.                                                          |
+| `repr`        | `(value) => string`  | The string form of a value kept behind a handle. Built when the handle is minted. Defaults to `repr()`.      |
 
 `serialize` and `unserialize` are called with the host as `this`.
 
@@ -511,6 +599,36 @@ asking never invokes one.
 The default `get`/`set` predicate: `false` for `__proto__`, `constructor` and `prototype`,
 `true` otherwise. Exported so a rule of your own can keep it — see
 [Which keys a chain may walk](#which-keys-a-chain-may-walk).
+
+### `is_remote(value)`
+
+`true` when `value` is a chain or a handle made by `connect()`. Use it wherever a
+`typeof value === 'function'` test would otherwise catch one:
+
+```js
+import { is_remote } from '@jcubic/mitty';
+
+if (typeof value === 'function' && !is_remote(value)) {
+  value = value.bind(self);
+}
+```
+
+A library that does not depend on mitty can make the same test from the symbol alone.
+It is registered with `Symbol.for()`, so a second copy of mitty — a bundled one beside
+one from a CDN — still answers to it:
+
+```js
+const HANDLE = Symbol.for('@jcubic/mitty/handle');
+const is_remote = value =>
+  !!value &&
+  (typeof value === 'object' || typeof value === 'function') &&
+  !!value[HANDLE];
+```
+
+### `repr(value)`
+
+The default for the host's `repr` option: `#<Selection>`, from the constructor name.
+Exported so a `repr` of your own can fall back to it.
 
 ### `connect(channel, options?)`
 
