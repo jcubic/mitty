@@ -13,6 +13,26 @@ import type { ErrorMarker, FunctionMarker, Marker, ObjectMarker } from './types'
 export const HANDLE = Symbol.for('@jcubic/mitty/handle');
 
 // -----------------------------------------------------------------------------
+// A chain is a Proxy around a function, because any step in it may turn out to
+// be a call. So `typeof chain` is 'function' and a library that duck-types for
+// a callable will treat it as one - jQuery Terminal's echo() calls .bind() on
+// it with one of its own objects, and that object then has to cross the
+// channel. This is the way to tell the two apart. It reads the same symbol
+// `connect()` answers, so a library need not import mitty to use it:
+//
+//     const HANDLE = Symbol.for('@jcubic/mitty/handle');
+//     if (typeof value === 'function' && !value[HANDLE]) { ... }
+//
+// -----------------------------------------------------------------------------
+export function is_remote(value: unknown): boolean {
+    if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+        return false;
+    }
+    const info = (value as Record<symbol, unknown>)[HANDLE];
+    return typeof info === 'object' && info !== null;
+}
+
+// -----------------------------------------------------------------------------
 // The RO/RPC version carried by every message - see rpc/SPEC.md §5. Peers are
 // compatible when the MAJOR parts match; a MINOR increment only ever adds.
 // -----------------------------------------------------------------------------

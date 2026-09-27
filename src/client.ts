@@ -50,7 +50,20 @@ interface Message {
 
 type Callback = (...args: unknown[]) => unknown;
 
+// where JSON.stringify last was, and - when the value has been seen before -
+// the path of the second sighting that closes the circle
+interface Spot {
+    path: string[];
+    value: unknown;
+    loop?: string[];
+}
+
 const PROMISE_METHODS = ['then', 'catch', 'finally'];
+
+// what a handle says for itself when the host sent no repr - §6.1.1 makes it
+// optional, so a host that does not build one is a host a client has to live
+// with rather than an error
+const UNLABELLED = '#<object>';
 
 function is_promise_method(key: string): boolean {
     return PROMISE_METHODS.includes(key);
@@ -86,47 +99,146 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
     const callbacks = new Map<number, Callback>();
     const callback_ids = new Map<Callback, number>();
 
+    // a short name for a value that cannot cross the channel, for an error
+    // that says what it is rather than where JSON.stringify gave up on it.
+    // Terminal emulators and other thenable-sniffing libraries call .bind() on
+    // an awaitable chain with one of their own objects, which lands a
+    // client-side value like a jQuery selection in the recorded args - the raw
+    // "circular structure" error that follows names no channel and no argument.
+    // No article, so a caller can put one in front of it or a word between
+    function describe_value(value: unknown): string {
+        if (Array.isArray(value)) {
+            return 'array';
+        }
+        if (typeof value !== 'object' || value === null) {
+            return typeof value;
+        }
+        const node = value as { nodeType?: unknown; nodeName?: unknown };
+        if (typeof node.nodeType === 'number' && typeof node.nodeName === 'string') {
+            return `DOM node <${node.nodeName}>`;
+        }
+        const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
+        if (typeof name === 'string' && name !== 'Object') {
+            return `object with constructor '${name}'`;
+        }
+        return 'object';
+    }
+
     function serialize(data: unknown): string {
-        return JSON.stringify(data, function (this: Record<string, unknown>, key, value) {
-            // the raw holder value, before JSON.stringify applied toJSON() -
-            // a chain proxy answers every property access, toJSON included
-            const raw = this[key];
-            if (raw instanceof Error) {
-                return encode_error(raw);
+        // where JSON.stringify was when it gave up. Recorded as the replacer
+        // runs, so a failure costs no second pass over the message - and a
+        // second pass is what would have to repeat every rule below, forever,
+        // to keep agreeing with them.
+        const paths = new WeakMap<object, string[]>();
+        // held in a box rather than a plain `let`: the replacer writes it, and
+        // a `let` would still read as its initial null down in the catch
+        const seen_last: { at: Spot | null } = { at: null };
+
+        function note(holder: object, key: string, raw: unknown): void {
+            // the root holder is the wrapper JSON makes, `{ "": data }`, and
+            // is the one holder never recorded. Anything else missing from
+            // `paths` sits under a toJSON() result, off the path the caller
+            // wrote - better to say nothing than to name a place they cannot
+            // find
+            const path = key === '' ? [] : paths.get(holder);
+            if (path === undefined) {
+                seen_last.at = null;
+                return;
             }
-            const chain = chain_info(raw);
-            if (chain) {
-                if (chain.ops.length || typeof chain.root.object !== 'number') {
-                    throw new TypeError(
-                        'mitty: cannot send an unresolved remote chain - await it first'
-                    );
+            const here = key === '' ? [] : [...path, key];
+            if (raw === null || typeof raw !== 'object') {
+                seen_last.at = { path: here, value: raw };
+                return;
+            }
+            const seen = paths.get(raw);
+            if (seen === undefined) {
+                paths.set(raw, here);
+                seen_last.at = { path: here, value: raw };
+                return;
+            }
+            // second sighting: the loop closes here, but what the caller can
+            // act on is the value itself, at the place they put it
+            seen_last.at = { path: seen, value: raw, loop: here };
+        }
+
+        try {
+            return JSON.stringify(
+                data,
+                function (this: Record<string, unknown>, key, value) {
+                    // the raw holder value, before JSON.stringify applied toJSON() -
+                    // a chain proxy answers every property access, toJSON included
+                    const raw = this[key];
+                    note(this, key, raw);
+                    if (raw instanceof Error) {
+                        return encode_error(raw);
+                    }
+                    const chain = chain_info(raw);
+                    if (chain) {
+                        if (chain.ops.length || typeof chain.root.object !== 'number') {
+                            throw new TypeError(
+                                'mitty: cannot send an unresolved remote chain - await it first'
+                            );
+                        }
+                        // a handle can go back to the host, which swaps it for the
+                        // object it stands for
+                        return {
+                            __type__: 'object',
+                            __data__: { handle: chain.root.object }
+                        };
+                    }
+                    if (typeof raw === 'function') {
+                        let id = callback_ids.get(raw as Callback);
+                        if (id === undefined) {
+                            id = ++callback_id;
+                            callback_ids.set(raw as Callback, id);
+                            callbacks.set(id, raw as Callback);
+                        }
+                        // the arity the callback declares. Callers pass extras that
+                        // a callback did not ask for - an element beside an index, an
+                        // event beside a value - and those are often exactly what
+                        // cannot cross a channel. What Function.length cannot express
+                        // is a documented limitation; see the README
+                        return {
+                            __type__: 'function',
+                            __data__: { callback: id, arity: raw.length }
+                        };
+                    }
+                    return value;
                 }
-                // a handle can go back to the host, which swaps it for the
-                // object it stands for
-                return {
-                    __type__: 'object',
-                    __data__: { handle: chain.root.object }
-                };
+            );
+        } catch (error) {
+            // the replacer's own refusal already names the problem
+            if (error instanceof Error && error.message.startsWith('mitty:')) {
+                throw error;
             }
-            if (typeof raw === 'function') {
-                let id = callback_ids.get(raw as Callback);
-                if (id === undefined) {
-                    id = ++callback_id;
-                    callback_ids.set(raw as Callback, id);
-                    callbacks.set(id, raw as Callback);
-                }
-                // the arity the callback declares. Callers pass extras that
-                // a callback did not ask for - an element beside an index, an
-                // event beside a value - and those are often exactly what
-                // cannot cross a channel. What Function.length cannot express
-                // is a documented limitation; see the README
-                return {
-                    __type__: 'function',
-                    __data__: { callback: id, arity: raw.length }
-                };
+            // only two things are known to be the value's own fault: it closed
+            // a circle, or JSON carries no type for it. Everything else that
+            // can throw in here is someone's toJSON(), and dressing that up as
+            // a channel problem would send the caller looking the wrong way
+            const found = seen_last.at;
+            const kind =
+                found === null
+                    ? null
+                    : found.loop
+                      ? `a circular ${describe_value(found.value)} - it refers ` +
+                        `back to itself at ${found.loop.join('.')}`
+                      : typeof found.value === 'bigint'
+                        ? 'a bigint'
+                        : null;
+            if (found === null || kind === null) {
+                throw error;
             }
-            return value;
-        });
+            const failure = new TypeError(
+                `mitty: cannot send ${found.path.join('.')} across the channel - ` +
+                    `${kind}. Only plain data, functions and remote handles can ` +
+                    `be sent; await a remote chain first, and keep host-side ` +
+                    `objects behind handles.`
+            );
+            // the JSON error underneath, kept for its stack. Assigned rather
+            // than constructed: the target predates cause options.
+            (failure as TypeError & { cause?: unknown }).cause = error;
+            throw failure;
+        }
     }
 
     function unserialize(text: string): Message {
@@ -134,7 +246,11 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             if (is_object_marker(value)) {
                 // a handle to something on the host - make it a chain rooted
                 // there rather than handing back the marker itself
-                return make_chain({ object: value.__data__.handle });
+                return make_chain(
+                    { object: value.__data__.handle },
+                    [],
+                    value.__data__.repr
+                );
             }
             if (is_error_marker(value)) {
                 return decode_error(value);
@@ -250,15 +366,38 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
     // Records property accesses and calls without touching the channel. The
     // whole chain is sent once, when something awaits it.
     // -------------------------------------------------------------------------
-    function make_chain(root: Root, ops: Op[] = []): Remote {
+    // `label` is the repr the host built when it minted this handle (§6.1.1).
+    // It belongs to the handle, not to anything recorded onto it - a chain is
+    // an operation that has not run, and has no value to stand for yet.
+    function make_chain(root: Root, ops: Op[] = [], label?: string): Remote {
         const target = function () {} as unknown as Remote;
         return new Proxy(target, {
             apply(_target, _this_arg, args: unknown[]) {
-                return make_chain(root, [...ops, { type: 'call', args }]);
+                return make_chain(root, [...ops, { type: 'call', args }], label);
             },
             get(_target, key) {
                 if (key === HANDLE) {
                     return { root, ops };
+                }
+                // String(x), `${x}` and x + '' all land here. They cannot wait
+                // for a round trip, so the answer has to be something already
+                // held: the repr that came with the handle. Without this the
+                // engine falls back to toString(), which on a chain is another
+                // chain rather than a string, and coercion fails with
+                // "Cannot convert object to primitive value"
+                if (key === Symbol.toPrimitive) {
+                    return () => {
+                        if (ops.length) {
+                            throw new TypeError(
+                                'mitty: cannot make a string from a remote chain ' +
+                                    'that has not run - await it first'
+                            );
+                        }
+                        if (typeof root.namespace === 'string') {
+                            return `#<module '${root.namespace}'>`;
+                        }
+                        return label ?? UNLABELLED;
+                    };
                 }
                 // a chain with something recorded behaves like a promise:
                 // attaching then/catch/finally is what triggers execution
@@ -282,7 +421,7 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
                 if (typeof key !== 'string') {
                     return undefined;
                 }
-                return make_chain(root, [...ops, { type: 'get', key }]);
+                return make_chain(root, [...ops, { type: 'get', key }], label);
             },
             // An assignment cannot be awaited. This trap has to answer now,
             // and `a.b = c` evaluates to `c` in JavaScript, never to a

@@ -23,7 +23,7 @@ import {
     version_mismatch
 } from './protocol';
 import type { Channel, ChannelListener, ObjectMarker, Op } from './types';
-import { has_methods, safe_key } from './values';
+import { has_methods, repr, safe_key } from './values';
 
 export interface HostOptions {
     // the transport this host listens on; the host never closes it
@@ -50,6 +50,10 @@ export interface HostOptions {
     // it, so compose with safe_key() when you mean to keep it.
     get?(key: string): boolean;
     set?(key: string): boolean;
+    // the string form of a value that stays here behind a handle. Built when
+    // the handle is minted and sent with it, so `String(handle)` in the client
+    // answers without a round trip. Defaults to the exported repr().
+    repr?(this: Host, value: unknown): string;
 }
 
 interface Message {
@@ -100,7 +104,19 @@ export class Host {
     public remote(value: unknown): ObjectMarker {
         const id = ++this._object_id;
         this._objects.set(id, value);
-        return { __type__: 'object', __data__: { handle: id } };
+        return { __type__: 'object', __data__: { handle: id, repr: this._repr(value) } };
+    }
+
+    // The string form travels with the handle rather than being asked for
+    // later, because the client needs it from Symbol.toPrimitive - and that
+    // has to answer now. There is no round trip to be had inside `String(x)`.
+    private _repr(value: unknown): string {
+        const rule = this._options.repr ?? repr;
+        const text = rule.call(this, value);
+        if (typeof text !== 'string') {
+            throw internal(`repr() must answer a string, not ${typeof text}`);
+        }
+        return text;
     }
 
     // -------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Host } from '../src/index';
+import { is_remote } from '../src/index';
 import { cleanup, module_pair, pair } from './helpers';
 
 afterEach(() => {
@@ -126,6 +127,119 @@ describe('remote handles', () => {
         await expect(
             require('counter').is_same(require('counter').get())
         ).rejects.toThrow(/unresolved/i);
+    });
+
+    it('rejects a circular argument with a mitty error, not a JSON one', async () => {
+        const { client } = module_pair('app', { echo: (value: unknown) => value });
+        const circular: Record<string, unknown> = { name: 'selection' };
+        circular.self = circular;
+        await expect(client.require('app').echo(circular)).rejects.toThrow(
+            /mitty: cannot send ops\.1\.args\.0 .*circular/
+        );
+    });
+
+    it('names the host-side object smuggled in as an argument', async () => {
+        // what jquery.terminal's echo() does to an awaitable proxy: it treats
+        // it as a function, calls .bind(realJQuery)() on it, and the real
+        // jQuery selection lands in the chain's call args
+        const { client } = module_pair('app', { echo: (value: unknown) => value });
+        class FnInit {
+            self: unknown;
+            constructor() {
+                this.self = this;
+            }
+        }
+        const selection = new FnInit();
+        const echo = client.require('app').echo;
+        await expect(echo.bind(selection)()).rejects.toThrow(/FnInit/);
+    });
+
+    it('rejects a bigint argument with a mitty error', async () => {
+        const { client } = module_pair('app', { echo: (value: unknown) => value });
+        await expect(client.require('app').echo(10n)).rejects.toThrow(
+            /mitty: cannot send ops\.1\.args\.0 .*a bigint/
+        );
+    });
+
+    it('blames the argument, not the inner property that closes the circle', async () => {
+        const { client } = module_pair('app', { echo: (value: unknown) => value });
+        const selection: Record<string, unknown> = { length: 1 };
+        selection[0] = { nodeType: 1, nodeName: 'DIV', jQuery1: { terminal: selection } };
+        const error = await client
+            .require('app')
+            .echo(selection)
+            .catch((e: Error) => e);
+        // the argument is what the caller can act on; the path to the edge
+        // where JSON noticed the loop only tells them where it looked
+        expect(error.message).toMatch(/cannot send ops\.1\.args\.0 across the channel/);
+        expect(error.message).toContain('ops.1.args.0.0.jQuery1.terminal');
+    });
+
+    it('names a DOM node by its tag', async () => {
+        const { client } = module_pair('app', { echo: (value: unknown) => value });
+        const node: Record<string, unknown> = { nodeType: 1, nodeName: 'DIV' };
+        node.parentNode = node;
+        await expect(client.require('app').echo(node)).rejects.toThrow(
+            /a circular DOM node <DIV>/
+        );
+    });
+
+    it('lets a throwing toJSON report itself', async () => {
+        // the value is not unsendable - the caller's own hook failed, and
+        // relabelling that as a channel problem would send them looking in
+        // the wrong place
+        const { client } = module_pair('app', { echo: (value: unknown) => value });
+        const hostile = {
+            toJSON() {
+                throw new Error('toJSON said no');
+            }
+        };
+        await expect(client.require('app').echo(hostile)).rejects.toThrow(
+            'toJSON said no'
+        );
+    });
+
+    it('finds the circle in a structure larger than any fixed budget', async () => {
+        const { client } = module_pair('app', { echo: (value: unknown) => value });
+        // wide rather than deep - JSON.stringify recurses, and a deep enough
+        // structure runs out of stack before anything here gets a say
+        const root: Record<string, unknown> = {};
+        for (let i = 0; i < 20000; i++) {
+            root['sibling' + i] = { id: i, text: 'x'.repeat(16) };
+        }
+        root.loop = root;
+        await expect(client.require('app').echo(root)).rejects.toThrow(
+            /cannot send ops\.1\.args\.0 across the channel/
+        );
+    });
+});
+
+describe('is_remote', () => {
+    it('tells a chain apart from an ordinary function', async () => {
+        const { client } = module_pair('app', { thing: { method: () => 1 } });
+        const chain = client.require('app').thing;
+        // a chain is a function to `typeof`, which is what makes a library
+        // duck-typing for a callable reach for .bind() or .call() on it
+        expect(typeof chain).toBe('function');
+        expect(is_remote(chain)).toBe(true);
+        expect(is_remote(() => 1)).toBe(false);
+        expect(is_remote({})).toBe(false);
+        expect(is_remote(null)).toBe(false);
+        expect(is_remote('handle')).toBe(false);
+    });
+
+    it('recognises a resolved handle', async () => {
+        const { client } = module_pair('app', { thing: { method: () => 1 } });
+        const handle = await client.require('app').thing;
+        expect(is_remote(handle)).toBe(true);
+    });
+
+    it('works through the bare symbol, without importing mitty', async () => {
+        // how a library that does not depend on mitty can still tell:
+        // Symbol.for() means a second copy of the library agrees
+        const { client } = module_pair('app', { thing: { method: () => 1 } });
+        const chain = client.require('app').thing as unknown as Record<symbol, unknown>;
+        expect(chain[Symbol.for('@jcubic/mitty/handle')]).toBeTruthy();
     });
 });
 
@@ -379,5 +493,104 @@ describe('serialize hooks', () => {
         });
         const value = { a: 1, b: [1, 2, { c: 'three' }], d: null, e: true };
         expect(await client.require('app').echo(value)).toEqual(value);
+    });
+});
+
+describe('repr', () => {
+    class Selection {
+        constructor(public length: number) {}
+        text() {
+            return 'hi';
+        }
+    }
+
+    function repr_pair(repr?: (value: unknown) => string) {
+        return pair({
+            resolve: (name: string) =>
+                name === 'app' ? { get: () => new Selection(3) } : null,
+            ...(repr ? { repr } : {})
+        });
+    }
+
+    it('gives a handle a string form the host chose', async () => {
+        const { client } = repr_pair(value =>
+            value instanceof Selection ? `#<jQuery [${value.length}]>` : String(value)
+        );
+        const handle = await client.require('app').get();
+        expect(String(handle)).toBe('#<jQuery [3]>');
+        expect(`${handle}`).toBe('#<jQuery [3]>');
+        expect('' + handle).toBe('#<jQuery [3]>');
+    });
+
+    it('names the constructor when no repr is configured', async () => {
+        const { client } = repr_pair();
+        const handle = await client.require('app').get();
+        expect(String(handle)).toBe('#<Selection>');
+    });
+
+    it('calls repr on the host, with the real object and the host as this', async () => {
+        const seen: unknown[] = [];
+        const receivers: unknown[] = [];
+        const { client, host } = pair({
+            resolve: (name: string) =>
+                name === 'app' ? { get: () => new Selection(1) } : null,
+            repr(this: Host, value: unknown) {
+                seen.push(value);
+                receivers.push(this);
+                return 'ok';
+            }
+        });
+        await client.require('app').get();
+        // the real object, not a handle - which is the whole point of doing
+        // this on the host
+        expect(seen[0]).toBeInstanceOf(Selection);
+        expect(receivers[0]).toBe(host);
+    });
+
+    it('refuses to stringify a chain that has not run', async () => {
+        const { client } = repr_pair();
+        const chain = client.require('app').get();
+        expect(() => String(chain)).toThrow(/mitty:.*await/i);
+    });
+
+    it('labels a bare module reference', async () => {
+        const { client } = repr_pair();
+        expect(String(client.require('app'))).toBe("#<module 'app'>");
+    });
+
+    it('throws when repr answers with something other than a string', async () => {
+        const { client } = repr_pair((() => 42) as unknown as (v: unknown) => string);
+        // not expect().rejects: that helper sees `typeof chain === 'function'`
+        // and calls the chain, which records a second call onto it
+        const error = await client
+            .require('app')
+            .get()
+            .catch((e: Error) => e);
+        expect(error.message).toMatch(/repr\(\).*string/i);
+    });
+
+    it('sends a handle back as the integer alone, without its repr', async () => {
+        const seen: string[] = [];
+        const { client } = pair({
+            resolve: (name: string) =>
+                name === 'app'
+                    ? {
+                          get: () => new Selection(2),
+                          same: (other: unknown) => other instanceof Selection
+                      }
+                    : null,
+            repr: () => '#<jQuery [2]>',
+            unserialize(value: unknown) {
+                if (typeof value === 'string') {
+                    seen.push(value);
+                }
+                return value;
+            }
+        });
+        const handle = await client.require('app').get();
+        expect(String(handle)).toBe('#<jQuery [2]>');
+        expect(await client.require('app').same(handle)).toBe(true);
+        // the repr is the host's own text - it has no business travelling back
+        expect(seen.some(text => text.includes('jQuery'))).toBe(false);
     });
 });
