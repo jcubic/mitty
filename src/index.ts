@@ -7,7 +7,9 @@
 export { Host } from './host';
 export type { HostOptions } from './host';
 export { connect } from './client';
-export { has_methods } from './values';
+export { has_methods, safe_key } from './values';
+// RO/RPC protocol constants - see rpc/SPEC.md
+export { CODES, VERSION } from './protocol';
 export type {
     Channel,
     ChannelEvent,

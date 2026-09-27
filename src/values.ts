@@ -48,3 +48,24 @@ export function has_methods(value: unknown): boolean {
     }
     return false;
 }
+
+// -----------------------------------------------------------------------------
+// May a chain walk through this key? This is the default for the Host's `get`
+// and `set` options, and it is mitty's answer to RO/RPC §13.2, which leaves
+// the policy to the implementation because the dangerous names differ by
+// language.
+//
+// These three are the ways a JavaScript chain reaches a prototype object, and
+// a `set` on a prototype reaches every object in the program - including ones
+// the peer was never given. Reading is refused as well as writing, because the
+// write that does the damage is `{get constructor}{get prototype}{set admin}`,
+// whose own key is innocent.
+//
+// The cost is that `value.constructor.name` cannot be read across a channel.
+// Compose this with a rule of your own to change that; see the README.
+// -----------------------------------------------------------------------------
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+export function safe_key(key: string): boolean {
+    return !UNSAFE_KEYS.has(key);
+}
