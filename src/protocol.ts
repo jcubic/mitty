@@ -57,6 +57,7 @@ export const CODES = {
     MODULE_NOT_FOUND: -32601,
     INVALID_HANDLE: -32602,
     INTERNAL: -32603,
+    NO_INTROSPECTION: -32014,
     KEY_DENIED: -32013,
     VERSION_MISMATCH: -32012,
     CANNOT_SET: -32011,
@@ -105,6 +106,13 @@ export function key_denied(label: string, key: string, action: string): Coded {
     return coded(
         new Error(`mitty: ${action} of ${label}.${key} is not permitted`),
         CODES.KEY_DENIED
+    );
+}
+
+export function no_introspection(label: string): Coded {
+    return coded(
+        new Error(`mitty: the host does not introspect ${label}`),
+        CODES.NO_INTROSPECTION
     );
 }
 

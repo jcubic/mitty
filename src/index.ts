@@ -6,8 +6,8 @@
  */
 export { Host } from './host';
 export type { HostOptions } from './host';
-export { connect } from './client';
-export { has_methods, repr, safe_key } from './values';
+export { connect, dir } from './client';
+export { has_methods, methods, repr, safe_key } from './values';
 // RO/RPC protocol constants - see rpc/SPEC.md
 export { CODES, VERSION, is_remote } from './protocol';
 export type {
@@ -18,8 +18,11 @@ export type {
     ClientOptions,
     ErrorMarker,
     FunctionMarker,
+    Arity,
     Marker,
+    Method,
     ObjectMarker,
+    Param,
     Op,
     Remote
 } from './types';

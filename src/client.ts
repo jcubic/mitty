@@ -19,6 +19,7 @@ import type {
     ChannelListener,
     Client,
     ClientOptions,
+    Method,
     Op,
     Remote
 } from './types';
@@ -33,6 +34,11 @@ interface Root {
 interface ChainInfo {
     root: Root;
     ops: Op[];
+    // run this chain and describe what it produces. Held here rather than
+    // exported from the client object because dir() is a free function, and a
+    // chain is the only thing it is given - it has to find its own way back
+    // to the connection that made it
+    dir(): Promise<Method[]>;
 }
 
 interface Message {
@@ -377,7 +383,11 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             },
             get(_target, key) {
                 if (key === HANDLE) {
-                    return { root, ops };
+                    return {
+                        root,
+                        ops,
+                        dir: () => call(root, [...ops, { type: 'dir' }])
+                    } as ChainInfo;
                 }
                 // String(x), `${x}` and x + '' all land here. They cannot wait
                 // for a round trip, so the answer has to be something already
@@ -473,4 +483,30 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             callback_ids.clear();
         }
     };
+}
+
+// -----------------------------------------------------------------------------
+// List the methods of a remote object.
+//
+//     import { dir } from '@jcubic/mitty';
+//     await dir(await $('.terminal'));
+//
+// Given a chain that has not run, the chain runs first and what it produces is
+// what gets described - so `await dir($('.terminal'))` works too, in one round
+// trip rather than two.
+//
+// Everything past `name` is optional; see the Method type. A host may refuse
+// outright, which is an error rather than an empty list.
+// -----------------------------------------------------------------------------
+export function dir(remote: unknown): Promise<Method[]> {
+    const info = chain_info(remote);
+    if (!info || typeof info.dir !== 'function') {
+        return Promise.reject(
+            new TypeError(
+                'mitty: dir() expects a remote object - a handle, or a chain ' +
+                    'that resolves to one'
+            )
+        );
+    }
+    return info.dir();
 }

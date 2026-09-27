@@ -18,12 +18,13 @@ import {
     is_error_marker,
     is_function_marker,
     is_object_marker,
+    no_introspection,
     not_a_function,
     unknown_module,
     version_mismatch
 } from './protocol';
-import type { Channel, ChannelListener, ObjectMarker, Op } from './types';
-import { has_methods, repr, safe_key } from './values';
+import type { Channel, ChannelListener, Method, ObjectMarker, Op } from './types';
+import { has_methods, methods, repr, safe_key } from './values';
 
 export interface HostOptions {
     // the transport this host listens on; the host never closes it
@@ -54,6 +55,10 @@ export interface HostOptions {
     // the handle is minted and sent with it, so `String(handle)` in the client
     // answers without a round trip. Defaults to the exported repr().
     repr?(this: Host, value: unknown): string;
+    // what dir() on the client answers for a value kept here. Defaults to
+    // methods(). Return null to refuse - RO/RPC makes introspection optional,
+    // because not every language can look a value up like this.
+    dir?(this: Host, value: unknown): Method[] | null;
 }
 
 interface Message {
@@ -360,6 +365,13 @@ export class Host {
                 object = value;
                 value = (value as Record<string, unknown> | null | undefined)?.[op.key];
                 label += `.${op.key}`;
+            } else if (op.type === 'dir') {
+                // §8.3: terminal. What comes back is a description, not the
+                // value, so a step after it would have nothing to run against
+                if (op !== ops[ops.length - 1]) {
+                    throw invalid_request('dir must be the last op in a chain');
+                }
+                return this._describe(value, label);
             } else if (op.type === 'set') {
                 if (!this._permits('set', op.key)) {
                     throw key_denied(label, op.key, 'write');
@@ -376,7 +388,7 @@ export class Host {
                 // methods in it that nothing would ever release
                 value = undefined;
                 object = undefined;
-            } else {
+            } else if (op.type === 'call') {
                 if (typeof value !== 'function') {
                     throw not_a_function(label);
                 }
@@ -388,9 +400,33 @@ export class Host {
                 // something else, so the next call has no receiver
                 object = undefined;
                 label += '()';
+            } else {
+                // a later minor may define ops this host has never heard of.
+                // Treating one as a call was how this used to end, and it
+                // reported that the value was not a function - true, and about
+                // a question nobody asked
+                const { type } = op as unknown as { type: unknown };
+                throw invalid_request(`unknown op '${String(type)}' at ${label}`);
             }
         }
         return value;
+    }
+
+    // Introspection is OPTIONAL in RO/RPC: a host that will not do it says so
+    // with a code, rather than answering an empty list that reads as "no
+    // methods". The key policy applies here too - a name a chain may not read
+    // is a name this must not hand out, or `dir` becomes the way to find the
+    // keys `get` refuses.
+    private _describe(value: unknown, label: string): Method[] {
+        const rule = this._options.dir ?? methods;
+        const listed = rule.call(this, value);
+        if (listed === null || listed === undefined) {
+            throw no_introspection(label || 'this value');
+        }
+        if (!Array.isArray(listed)) {
+            throw internal(`dir() must answer an array or null, not ${typeof listed}`);
+        }
+        return listed.filter(method => this._permits('get', method.name));
     }
 
     // -------------------------------------------------------------------------
