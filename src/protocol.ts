@@ -123,8 +123,12 @@ export function encode_error(error: Error, fallback?: number): ErrorMarker {
 
 export function decode_error(marker: ErrorMarker): Coded {
     const { name, message, stack, code } = marker.__data__;
-    const error: Coded = new Error(message);
-    error.name = name;
+    // §6.3 says both are strings, but the peer decides what it sends. Without
+    // this an object message becomes "[object Object]" and a numeric name
+    // survives as a number, so a caller reading error.name gets something no
+    // Error ever has
+    const error: Coded = new Error(typeof message === 'string' ? message : '');
+    error.name = typeof name === 'string' ? name : 'Error';
     if (typeof stack === 'string') {
         // keep the far side's stack - it points at where the call actually
         // failed, which is far more useful than a stack inside this library
