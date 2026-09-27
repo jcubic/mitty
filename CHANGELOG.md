@@ -20,7 +20,6 @@ The wire format is now specified as [RO/RPC 1.0](https://rorpc.org/). Both ends 
 - A caught error carries that `code`, e.g. `-32601` for a module that does not resolve.
 - `stack` is absent when there is none, in place of the `null` the array form needed.
 - A handle made for a callback argument now belongs to that call. The host releases it when the call ends.
-- `arity` on a function marker is optional. When it is absent the host sends every argument.
 - A chain cannot read or write `__proto__`, `constructor` or `prototype`. This stops it from reaching a prototype.
 - New `get` and `set` options on the host decide which keys a chain may use. Each one answers true or false.
 - New exports: `VERSION`, `CODES` and `safe_key`.
