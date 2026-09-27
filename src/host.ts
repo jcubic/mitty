@@ -216,10 +216,14 @@ export class Host {
             const call = ++this._call_id;
             return new Promise((resolve, reject) => {
                 this._pending.set(call, { resolve, reject });
-                // §11.2: a limit only if the client asked for one. Callers
-                // like jQuery pass extras (event objects, elements) that a
-                // client usually cannot take, so most ask for one
-                const sent = typeof arity === 'number' ? args.slice(0, arity) : args;
+                // §11.2: a limit only if the client asked for a real one.
+                // Callers like jQuery pass extras (event objects, elements)
+                // that a client usually cannot take, so most ask for one.
+                // A negative arity would reach slice() as "all but the last",
+                // and a fraction or NaN as something else again - none of
+                // which is a limit, so treat those as if none was given
+                const limited = Number.isInteger(arity) && (arity as number) >= 0;
+                const sent = limited ? args.slice(0, arity) : args;
                 // anything kept back for these arguments belongs to this call
                 const made: number[] = [];
                 this._post({ callback: id, call, args: sent }, made);

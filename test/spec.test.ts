@@ -59,7 +59,9 @@ function wired(options: Omit<HostOptions, 'channel'>) {
         replies: host_wire.sent,
         requests: client_wire.sent,
         // deliver a frame to the host as if a peer had sent it
-        inject: (frame: unknown) => client_wire.postMessage(JSON.stringify(frame))
+        inject: (frame: unknown) => client_wire.postMessage(JSON.stringify(frame)),
+        // and the other way: a frame the client receives as if from a host
+        inject_reply: (frame: unknown) => host_wire.postMessage(JSON.stringify(frame))
     };
 }
 
@@ -518,5 +520,95 @@ describe('§13.2 which keys a chain may walk', () => {
         });
         await expect(client.require('m').name).rejects.toThrow(/true or false/i);
         expect(last(replies).error.__data__.code).toBe(-32603);
+    });
+});
+
+// -----------------------------------------------------------------------------
+// A peer is not required to be well behaved. §6.3 and §6.2 say what a marker
+// holds; a receiver that trusts it without looking hands the caller nonsense.
+describe('markers that do not keep to the spec', () => {
+    it('§6.3 makes a real Error out of a marker with the wrong types', async () => {
+        // a host that never answers, so the crafted reply is the only one
+        const { client, inject_reply } = wired({ resolve: () => new Promise(() => {}) });
+        const pending = client.require('m').thing();
+        inject_reply({
+            rorpc: VERSION,
+            id: 1,
+            error: { __type__: 'error', __data__: { name: 42, message: { a: 1 } } }
+        });
+        const error = await pending.catch((e: Error) => e);
+        expect(error).toBeInstanceOf(Error);
+        expect(error.name).toBe('Error');
+        expect(error.message).toBe('');
+    });
+
+    it('§6.2 ignores a negative arity instead of dropping the last argument', async () => {
+        // slice(0, -1) would quietly send every argument but the last
+        const { inject, replies } = wired({
+            resolve: () => ({ each: (fn: (...a: unknown[]) => unknown) => fn(1, 2, 3) })
+        });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [
+                { type: 'get', key: 'each' },
+                {
+                    type: 'call',
+                    args: [{ __type__: 'function', __data__: { callback: 7, arity: -1 } }]
+                }
+            ]
+        });
+        await settle();
+        expect(frames(replies).find(f => 'callback' in f).args).toEqual([1, 2, 3]);
+    });
+
+    it('§6.2 ignores an arity that is not a whole number', async () => {
+        const { inject, replies } = wired({
+            resolve: () => ({ each: (fn: (...a: unknown[]) => unknown) => fn(1, 2, 3) })
+        });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [
+                { type: 'get', key: 'each' },
+                {
+                    type: 'call',
+                    args: [
+                        { __type__: 'function', __data__: { callback: 7, arity: 1.5 } }
+                    ]
+                }
+            ]
+        });
+        await settle();
+        expect(frames(replies).find(f => 'callback' in f).args).toEqual([1, 2, 3]);
+    });
+
+    it('§6.2 still honours a well-formed arity, zero included', async () => {
+        for (const [arity, expected] of [
+            [0, []],
+            [2, [1, 2]]
+        ] as Array<[number, unknown[]]>) {
+            const { inject, replies } = wired({
+                resolve: () => ({
+                    each: (fn: (...a: unknown[]) => unknown) => fn(1, 2, 3)
+                })
+            });
+            inject({
+                rorpc: VERSION,
+                id: 1,
+                namespace: 'm',
+                ops: [
+                    { type: 'get', key: 'each' },
+                    {
+                        type: 'call',
+                        args: [{ __type__: 'function', __data__: { callback: 7, arity } }]
+                    }
+                ]
+            });
+            await settle();
+            expect(frames(replies).find(f => 'callback' in f).args).toEqual(expected);
+        }
     });
 });
