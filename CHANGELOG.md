@@ -13,6 +13,12 @@ Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic 
 - The host makes the repr when it makes the handle, and sends the two together. A string form cannot wait.
 - New `repr()` export. It is the default, and gives `#<Selection>` from the name of the constructor.
 - An object marker can carry a `repr` member. See RO/RPC §6.1.1. The client never sends it back.
+- New `dir()` export. It lists the methods of a remote object. Give it a handle or a chain.
+- New `dir` option on the host. It says what `dir()` answers. Return `null` to refuse.
+- New `methods()` export. It is the default, and reads the value and its prototype chain.
+- `dir` does not name a key that the `get` policy refuses. It cannot show what that policy hides.
+- Only the name of a method is sure. In JavaScript the host can give the required count and no more.
+- New op `dir` in RO/RPC §8.3, and new error code `-32014` for a host that does not introspect.
 
 - An argument that JSON cannot carry gives a mitty error. It names the argument and says what the value is.
 - The error keeps the JSON error on `cause`. A circular value points to the place that closes the circle.

@@ -564,20 +564,77 @@ Coercing a chain that has _not_ run is still an error, and says so:
 // mitty: cannot make a string from a remote chain that has not run - await it first
 ```
 
+### Listing what a remote object can do
+
+```js
+import { dir } from '@jcubic/mitty';
+
+const $ = require('$');
+await dir($('.terminal')); // the chain runs first, then its result is described
+```
+
+```json
+[
+  { "name": "add", "params": { "arity": { "required": 1 } } },
+  { "name": "addClass", "params": { "arity": { "required": 1 } } },
+  { "name": "append", "params": { "arity": { "required": 0 } } }
+]
+```
+
+> [!IMPORTANT]
+> Only `name` is ever guaranteed. Everything under `params` is optional, and in JavaScript
+> the host can fill in almost none of it: `Function.length` counts the parameters before the
+> first default, so `append(node, mode = 'after')` reports `required: 1` and cannot say that
+> a second is accepted. Parameter **names and types are not recoverable at all** — a minified
+> `find(e, t)` has lost them. Treat an absent member as unknown, never as zero.
+
+A host that knows its own API can say more, through the `dir` option:
+
+```js
+import { methods } from '@jcubic/mitty';
+
+new Host({
+  channel,
+  resolve,
+  dir(value) {
+    if (value instanceof Query) {
+      return [
+        {
+          name: 'find',
+          params: {
+            arity: { required: 1, optional: 1 },
+            values: [{ name: 'selector', type: 'string' }]
+          }
+        }
+      ];
+    }
+    return methods(value); // the default
+  }
+});
+```
+
+Return `null` to refuse. That is an error on the client, not an empty list — `[]` means
+"this object has no methods", which is a different claim. Introspection is optional in
+RO/RPC for exactly this reason: not every language can look a value up like this.
+
+`dir` never names a key the host's `get` policy would refuse, so it cannot be used to
+enumerate what that policy hides.
+
 ## API
 
 ### `new Host(options)`
 
-| option        | type                 | description                                                                                                  |
-| ------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `channel`     | `Channel`            | Transport to listen on. Required. Never closed by mitty.                                                     |
-| `resolve`     | `(name) => unknown`  | Turns a `require()` name into a value. Return `null`/`undefined` for unknown. May be async.                  |
-| `serialize`   | `(value) => unknown` | Called for every outgoing value, before `remote`. Return a different value to decide that one yourself.      |
-| `unserialize` | `(value) => unknown` | Called for every incoming value.                                                                             |
-| `remote`      | `(value) => boolean` | Which values stay behind a handle. Defaults to `has_methods`. Replaces the default rather than adding to it. |
-| `get`         | `(key) => boolean`   | May a chain read this key? Defaults to `safe_key`. Replaces it rather than adding to it.                     |
-| `set`         | `(key) => boolean`   | May a chain write this key? Defaults to `safe_key`.                                                          |
-| `repr`        | `(value) => string`  | The string form of a value kept behind a handle. Built when the handle is minted. Defaults to `repr()`.      |
+| option        | type                          | description                                                                                                  |
+| ------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `channel`     | `Channel`                     | Transport to listen on. Required. Never closed by mitty.                                                     |
+| `resolve`     | `(name) => unknown`           | Turns a `require()` name into a value. Return `null`/`undefined` for unknown. May be async.                  |
+| `serialize`   | `(value) => unknown`          | Called for every outgoing value, before `remote`. Return a different value to decide that one yourself.      |
+| `unserialize` | `(value) => unknown`          | Called for every incoming value.                                                                             |
+| `remote`      | `(value) => boolean`          | Which values stay behind a handle. Defaults to `has_methods`. Replaces the default rather than adding to it. |
+| `get`         | `(key) => boolean`            | May a chain read this key? Defaults to `safe_key`. Replaces it rather than adding to it.                     |
+| `set`         | `(key) => boolean`            | May a chain write this key? Defaults to `safe_key`.                                                          |
+| `repr`        | `(value) => string`           | The string form of a value kept behind a handle. Built when the handle is minted. Defaults to `repr()`.      |
+| `dir`         | `(value) => Method[] \| null` | What `dir()` answers for a value kept here. `null` refuses. Defaults to `methods()`.                         |
 
 `serialize` and `unserialize` are called with the host as `this`.
 
@@ -629,6 +686,17 @@ const is_remote = value =>
 
 The default for the host's `repr` option: `#<Selection>`, from the constructor name.
 Exported so a `repr` of your own can fall back to it.
+
+### `dir(remote)`
+
+`Promise<Method[]>` — the methods of a handle, or of whatever a chain resolves to. Rejects
+if given something that is not remote.
+
+### `methods(value)`
+
+The default for the host's `dir` option: every method on the value and its prototype chain,
+sorted by name, stopping above `Object.prototype`. Getters are read as descriptors, so
+asking never invokes one.
 
 ### `connect(channel, options?)`
 

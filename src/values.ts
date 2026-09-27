@@ -4,6 +4,7 @@
  * Copyright (c) 2026 Jakub T. Jankiewicz <https://jakub.jankiewicz.org>
  * Released under MIT license
  */
+import type { Method } from './types';
 
 // -----------------------------------------------------------------------------
 // Does this value only make sense with its methods attached?
@@ -93,4 +94,47 @@ export function repr(value: unknown): string {
     }
     const name = (value as { constructor?: { name?: unknown } }).constructor?.name;
     return `#<${typeof name === 'string' && name ? name : 'object'}>`;
+}
+
+// -----------------------------------------------------------------------------
+// The default for the Host's `dir` option: every method of `value`, own ones
+// and inherited, sorted by name.
+//
+// The prototype chain is walked for the same reason has_methods() walks it - a
+// class keeps its methods there, so own properties alone would describe almost
+// nothing. Object.prototype and Function.prototype are the floor: `toString`
+// and `call` are on everything and say nothing about this value.
+//
+// Only `required` is filled in. Function.length counts the parameters before
+// the first default or rest, so `append(node, mode = 'after')` reports 1. That
+// is the truth about what the method requires, and everything JavaScript can
+// tell us about what it accepts - see the RO/RPC note on arity.
+// -----------------------------------------------------------------------------
+export function methods(value: unknown): Method[] {
+    if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
+        return [];
+    }
+    const found = new Map<string, Method>();
+    let proto: object | null = value as object;
+    while (proto && proto !== Object.prototype && proto !== Function.prototype) {
+        for (const key of Object.getOwnPropertyNames(proto)) {
+            // a nearer definition shadows a further one, so the first sighting
+            // of a name is the one that would actually be called
+            if (key === 'constructor' || found.has(key)) {
+                continue;
+            }
+            // the descriptor, not the property: a getter is not a method, and
+            // invoking one to find that out could do anything
+            const descriptor = Object.getOwnPropertyDescriptor(proto, key);
+            if (typeof descriptor?.value !== 'function') {
+                continue;
+            }
+            found.set(key, {
+                name: key,
+                params: { arity: { required: descriptor.value.length } }
+            });
+        }
+        proto = Object.getPrototypeOf(proto) as object | null;
+    }
+    return [...found.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
 }

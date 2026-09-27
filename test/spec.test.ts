@@ -256,6 +256,93 @@ describe('§6 markers carry a named object', () => {
 });
 
 // -----------------------------------------------------------------------------
+describe('§8.3 dir describes a value', () => {
+    it('§8.3 answers one entry per method, with what is known of the params', async () => {
+        const { inject, replies } = wired({
+            resolve: () => ({
+                // the parameter lists are the point: find declares one, and
+                // append declares one before a default, so both report 1
+                thing: {
+                    find: (selector: string) => selector,
+                    append: (node: unknown, mode = 'after') => [node, mode]
+                }
+            })
+        });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'get', key: 'thing' }, { type: 'dir' }]
+        });
+        await settle();
+        expect(frames(replies)[0].result).toEqual([
+            { name: 'append', params: { arity: { required: 1 } } },
+            { name: 'find', params: { arity: { required: 1 } } }
+        ]);
+    });
+
+    it('§8.3 refuses a dir that is not the last op', async () => {
+        const { inject, replies } = wired({ resolve: () => ({ thing: { a: () => 1 } }) });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'dir' }, { type: 'get', key: 'thing' }]
+        });
+        await settle();
+        expect(frames(replies)[0].error.__data__.code).toBe(-32600);
+    });
+
+    it('§8.2 an op type the host does not know is refused, not guessed at', async () => {
+        // a later minor may define ops this host has never heard of. Falling
+        // through to "call" makes the failure say something untrue - the
+        // value is not a function, but that was never what was asked
+        const { inject, replies } = wired({ resolve: () => ({ thing: { a: () => 1 } }) });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'get', key: 'thing' }, { type: 'sniff' }]
+        });
+        await settle();
+        expect(frames(replies)[0].error.__data__.code).toBe(-32600);
+        expect(frames(replies)[0].error.__data__.message).toMatch(/sniff/);
+    });
+
+    it('§8.3 a host that does not introspect fails rather than answering nothing', async () => {
+        const { inject, replies } = wired({
+            resolve: () => ({ thing: { a: () => 1 } }),
+            dir: () => null
+        });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'get', key: 'thing' }, { type: 'dir' }]
+        });
+        await settle();
+        expect(frames(replies)[0].error.__data__.code).toBe(-32014);
+    });
+
+    it('§8.3 does not name what the key policy hides', async () => {
+        const { inject, replies } = wired({
+            resolve: () => ({ thing: { open: () => 1, secret: () => 2 } }),
+            get: (key: string) => safe_key(key) && key !== 'secret'
+        });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'get', key: 'thing' }, { type: 'dir' }]
+        });
+        await settle();
+        expect(frames(replies)[0].result.map((m: { name: string }) => m.name)).toEqual([
+            'open'
+        ]);
+    });
+});
+
+// -----------------------------------------------------------------------------
 describe('§9.2 error codes', () => {
     it('-32601 for a module that does not resolve', async () => {
         const { client, replies } = wired({ resolve: () => null });

@@ -70,7 +70,37 @@ export type Marker = FunctionMarker | ObjectMarker | ErrorMarker;
 export type Op =
     | { type: 'get'; key: string }
     | { type: 'set'; key: string; value: unknown }
-    | { type: 'call'; args: unknown[] };
+    | { type: 'call'; args: unknown[] }
+    | { type: 'dir' };
+
+// -----------------------------------------------------------------------------
+// What `dir()` answers: one entry per method the host is willing to name.
+//
+// Everything below `name` is OPTIONAL, because introspection is not something
+// every language can do to the same depth. JavaScript can report `required`
+// and nothing else - Function.length stops at the first default parameter, so
+// the optional count is not merely unknown but unknowable without reading the
+// source. A language with real reflection can fill the rest, and a host that
+// knows its own API can supply all of it through the `dir` option.
+// -----------------------------------------------------------------------------
+export interface Param {
+    name?: string;
+    type?: string;
+}
+
+export interface Arity {
+    required?: number;
+    optional?: number;
+    variadic?: boolean;
+}
+
+export interface Method {
+    name: string;
+    params?: {
+        arity?: Arity;
+        values?: Param[];
+    };
+}
 
 // -----------------------------------------------------------------------------
 // The proxy handed back by require(). Every property access and call returns
