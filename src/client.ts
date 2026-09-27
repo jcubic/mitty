@@ -6,10 +6,13 @@
  */
 import {
     HANDLE,
+    VERSION,
+    compatible,
     decode_error,
     encode_error,
     is_error_marker,
-    is_object_marker
+    is_object_marker,
+    version_mismatch
 } from './protocol';
 import type {
     Channel,
@@ -33,6 +36,7 @@ interface ChainInfo {
 }
 
 interface Message {
+    rorpc?: string;
     id?: number;
     // present on a request, never on a reply - see the listener below
     ops?: unknown;
@@ -99,7 +103,10 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
                 }
                 // a handle can go back to the host, which swaps it for the
                 // object it stands for
-                return { __type__: 'object', __data__: [chain.root.object] };
+                return {
+                    __type__: 'object',
+                    __data__: { handle: chain.root.object }
+                };
             }
             if (typeof raw === 'function') {
                 let id = callback_ids.get(raw as Callback);
@@ -108,7 +115,15 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
                     callback_ids.set(raw as Callback, id);
                     callbacks.set(id, raw as Callback);
                 }
-                return { __type__: 'function', __data__: [id, raw.length] };
+                // the arity the callback declares. Callers pass extras that
+                // a callback did not ask for - an element beside an index, an
+                // event beside a value - and those are often exactly what
+                // cannot cross a channel. What Function.length cannot express
+                // is a documented limitation; see the README
+                return {
+                    __type__: 'function',
+                    __data__: { callback: id, arity: raw.length }
+                };
             }
             return value;
         });
@@ -119,7 +134,7 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             if (is_object_marker(value)) {
                 // a handle to something on the host - make it a chain rooted
                 // there rather than handing back the marker itself
-                return make_chain({ object: value.__data__[0] });
+                return make_chain({ object: value.__data__.handle });
             }
             if (is_error_marker(value)) {
                 return decode_error(value);
@@ -129,7 +144,7 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
     }
 
     function post(data: Message): void {
-        channel.postMessage(serialize(data));
+        channel.postMessage(serialize({ rorpc: VERSION, ...data }));
     }
 
     async function run_callback(data: Message): Promise<void> {
@@ -151,8 +166,14 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
         } catch {
             return;
         }
+        // §5.2. A client has no error reply to send, so a message it cannot
+        // speak to is dropped; §5.2 permits failing the pending call instead,
+        // which is done below rather than leaving a caller waiting forever
+        const versioned = compatible(data.rorpc);
         if (typeof data.callback === 'number') {
-            void run_callback(data);
+            if (versioned) {
+                void run_callback(data);
+            }
             return;
         }
         // only a reply settles a pending call. On a shared bus this client
@@ -167,6 +188,10 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             return;
         }
         pending.delete(data.id);
+        if (!versioned) {
+            entry.reject(version_mismatch(data.rorpc));
+            return;
+        }
         if (data.error) {
             entry.reject(data.error);
         } else {
@@ -181,7 +206,7 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             const id = ++rpc_id;
             let payload: string;
             try {
-                payload = serialize({ id, ...root, ops });
+                payload = serialize({ rorpc: VERSION, id, ...root, ops });
             } catch (error) {
                 // an argument that cannot be sent (an unresolved chain, a
                 // circular structure) fails the call rather than the channel

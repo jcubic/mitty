@@ -31,20 +31,27 @@ export interface Channel {
 // the same shape would be mistaken for one. The dunder names borrow Python's
 // convention to make that collision unlikely - `{ type, data }` is an ordinary
 // shape to find in application data, `{ __type__, __data__ }` is not.
+//
+// `__data__` is an object rather than a positional array so that every member
+// is named on the wire - see rpc/SPEC.md §6.
 // -----------------------------------------------------------------------------
 export interface FunctionMarker {
     __type__: 'function';
-    __data__: [id: number, length: number];
+    // `arity` is the most arguments the client will accept. Absent means no
+    // limit, and the host sends every argument the call produced - §11.2
+    __data__: { callback: number; arity?: number };
 }
 
 export interface ObjectMarker {
     __type__: 'object';
-    __data__: [id: number];
+    __data__: { handle: number };
 }
 
 export interface ErrorMarker {
     __type__: 'error';
-    __data__: [name: string, message: string, stack: string | null];
+    // stack and code are optional: an object payload lets a member be absent
+    // rather than a null holding a place, which a positional array could not
+    __data__: { name: string; message: string; stack?: string; code?: number };
 }
 
 export type Marker = FunctionMarker | ObjectMarker | ErrorMarker;

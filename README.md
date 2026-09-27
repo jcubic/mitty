@@ -46,13 +46,16 @@ transport-agnostic. You can use it to bridge any two contexts capable of sending
   states directly from the server or a peer. It works both ways; you can execute browser
   functions from the server or the server from the browser.
 
+The wire format is specified independently of this implementation as
+**[RO/RPC](https://rorpc.org/)** — Remote Object / Remote Procedure Call.
+
 ## Installation
 
 ```bash
 npm install @jcubic/mitty
 ```
 
-No install is needed to use it from a CDN. Two builds ship, and which one you get
+No installation is needed to use it from a CDN. Two builds ship, and which one you get
 depends on the URL.
 
 The **bare URL is the ES module**, for `import` in a page or a module worker:
@@ -321,6 +324,46 @@ adding to it, so `() => false` opts out entirely and goes back to explicit handl
 new Host({ channel, resolve, remote: value => value instanceof Node });
 ```
 
+## Which keys a chain may walk
+
+A chain is a list of property names the peer chose, so `resolve()` is not quite the whole
+boundary: from any object you hand out, `constructor.prototype` reaches `Object.prototype`,
+and a write there lands on **every object in the program** — including ones the peer was
+never given.
+
+Three keys are refused by default, for reading as well as writing:
+
+```js
+await require('config').constructor.prototype.admin; // Error, code -32013
+require('config').__proto__.admin = true; // Error, code -32013
+```
+
+Refusing the _write_ would not be enough. The damaging write is
+`{get constructor}{get prototype}{set admin}`, whose own key is `admin` — perfectly
+innocent. It is the reads in front of it that have to be stopped.
+
+The price is that `value.constructor.name` cannot be read across a channel. If you need
+that, or want a different rule entirely, `get` and `set` take one:
+
+```js
+import { Host, safe_key } from '@jcubic/mitty';
+
+new Host({
+  channel,
+  resolve,
+  get: key => safe_key(key) && !key.startsWith('_'), // keep the default, add to it
+  set: () => false // read-only host
+});
+```
+
+Both are **predicates**: they answer `true` or `false` for a key. They are not `Proxy`
+traps — mitty already has `serialize` and `remote` for changing values — and a rule that
+answers with anything else fails loudly rather than being read as "allow". Your rule
+_replaces_ the default, so compose with `safe_key()` when you mean to keep it.
+
+There is no `has`: RO/RPC has no such operation, and `key in proxy` could not use one
+anyway, since `in` must answer synchronously and a round trip cannot.
+
 ## Handles and memory
 
 Anything that becomes a handle — by the default rule or by `this.remote(value)` — is kept
@@ -371,9 +414,46 @@ const result = await require('util').map([1, 2, 3], n => n * 2);
 // -> [2, 4, 6], with the doubling done in the worker
 ```
 
-Arguments are trimmed to the callback's declared arity, because callers like jQuery pass
-extras (event objects, indexes) that usually cannot be serialized. Declare the parameters
-you actually want.
+Arguments are trimmed to the number of parameters your callback declares. Callers pass more
+than you asked for — jQuery gives an event object, `each()` gives the element beside the
+index — and those extras are usually exactly the things that cannot cross a channel.
+Declaring what you want is how you decline them:
+
+```js
+// cheerio calls back with (index, element); only the index is sent
+await $('li').each(index => {
+  count[index]++;
+});
+```
+
+Anything you _do_ declare that the host cannot copy arrives as a handle, and **that handle
+lives only for the call**. The host releases it as soon as your callback returns, so an
+`each()` over a thousand rows does not leave a thousand objects pinned on the other side.
+Read what you need while the call is running:
+
+```js
+await $('li').each(async (index, el) => {
+  text[index] = await el.text(); // read it now
+  saved.push(el); // this handle is dead once the callback returns
+});
+```
+
+> [!IMPORTANT]
+> The count comes from `Function.length`, which **stops at the first default or rest
+> parameter**. `(a, b = 1) => …` reports 1, so `b` always takes its default; `(...args) => …`
+> reports 0, so it receives nothing at all. Neither fails loudly — the callback simply runs
+> with less than the caller passed.
+>
+> Give a callback a fixed list of plain parameters. If you need an argument, name it:
+>
+> ```js
+> // ✗ b never arrives, args is always empty
+> await require('util').each((a, b = 2) => a + b);
+> await require('util').each((...args) => args.length);
+>
+> // ✓ say what you want
+> await require('util').each((a, b) => a + (b ?? 2));
+> ```
 
 ## Errors
 
@@ -408,6 +488,8 @@ await $('#list')
 | `serialize`   | `(value) => unknown` | Called for every outgoing value, before `remote`. Return a different value to decide that one yourself.      |
 | `unserialize` | `(value) => unknown` | Called for every incoming value.                                                                             |
 | `remote`      | `(value) => boolean` | Which values stay behind a handle. Defaults to `has_methods`. Replaces the default rather than adding to it. |
+| `get`         | `(key) => boolean`   | May a chain read this key? Defaults to `safe_key`. Replaces it rather than adding to it.                     |
+| `set`         | `(key) => boolean`   | May a chain write this key? Defaults to `safe_key`.                                                          |
 
 `serialize` and `unserialize` are called with the host as `this`.
 
@@ -423,6 +505,12 @@ The default `remote` predicate: `true` when the value has a callable property an
 its prototype chain below `Object.prototype`. Arrays, typed arrays, anything with a
 `toJSON()`, functions and primitives are all `false`. Getters are read as descriptors, so
 asking never invokes one.
+
+### `safe_key(key)`
+
+The default `get`/`set` predicate: `false` for `__proto__`, `constructor` and `prototype`,
+`true` otherwise. Exported so a rule of your own can keep it — see
+[Which keys a chain may walk](#which-keys-a-chain-may-walk).
 
 ### `connect(channel, options?)`
 
@@ -467,6 +555,8 @@ Messages on the wire are JSON strings, so a channel only has to carry text.
 - **Functions returned from the host are dropped**, as they would be by `JSON.stringify`.
   Expose them through a handle instead.
 - **Handles are not garbage collected** — see [Handles and memory](#handles-and-memory).
+- **`__proto__`, `constructor` and `prototype` are refused**, so `value.constructor.name`
+  cannot be read across a channel — see [Which keys a chain may walk](#which-keys-a-chain-may-walk).
 - **One channel carries one conversation.** Request ids start at 1 on every client, so two
   clients sharing a bus (sysend, a `BroadcastChannel` with more than two ends) cannot tell
   their replies apart. A host ignores traffic that is not addressed to it as a request, so

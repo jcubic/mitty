@@ -5,15 +5,25 @@
  * Released under MIT license
  */
 import {
+    CODES,
+    VERSION,
+    cannot_set,
+    compatible,
     decode_error,
     encode_error,
     invalid_handle,
+    internal,
+    invalid_request,
+    key_denied,
     is_error_marker,
     is_function_marker,
-    is_object_marker
+    is_object_marker,
+    not_a_function,
+    unknown_module,
+    version_mismatch
 } from './protocol';
 import type { Channel, ChannelListener, ObjectMarker, Op } from './types';
-import { has_methods } from './values';
+import { has_methods, safe_key } from './values';
 
 export interface HostOptions {
     // the transport this host listens on; the host never closes it
@@ -33,9 +43,17 @@ export interface HostOptions {
     // instance keeps working in the worker with nothing configured. Replaces
     // the default rather than adding to it: `() => false` turns it off.
     remote?(value: unknown): boolean;
+    // May a chain read this key? May it write it? Both default to safe_key(),
+    // which refuses the keys a chain reaches a prototype through - see
+    // RO/RPC §13.2. These are predicates, not Proxy traps: answer true or
+    // false. A rule of your own replaces the default rather than adding to
+    // it, so compose with safe_key() when you mean to keep it.
+    get?(key: string): boolean;
+    set?(key: string): boolean;
 }
 
 interface Message {
+    rorpc?: string;
     id?: number;
     namespace?: string;
     object?: number;
@@ -61,6 +79,9 @@ export class Host {
     // in-flight invocations of client callbacks, keyed per call (not per
     // function) so the same callback can be running more than once at a time
     private _pending = new Map<number, Resolver>();
+    // handles made while preparing one callback invocation, by call id. They
+    // belong to that call and are dropped when it is complete - see §10.4
+    private _scoped = new Map<number, number[]>();
     private _call_id = 0;
 
     constructor(options: HostOptions) {
@@ -79,14 +100,14 @@ export class Host {
     public remote(value: unknown): ObjectMarker {
         const id = ++this._object_id;
         this._objects.set(id, value);
-        return { __type__: 'object', __data__: [id] };
+        return { __type__: 'object', __data__: { handle: id } };
     }
 
     // -------------------------------------------------------------------------
     // drop a handle. Returns false if it was already gone.
     // -------------------------------------------------------------------------
     public release(handle: ObjectMarker | number): boolean {
-        const id = typeof handle === 'number' ? handle : handle?.__data__?.[0];
+        const id = typeof handle === 'number' ? handle : handle?.__data__?.handle;
         if (typeof id !== 'number') {
             throw new TypeError('mitty: release() expects a handle returned by remote()');
         }
@@ -100,20 +121,27 @@ export class Host {
         this._channel.removeEventListener('message', this._listener);
         this._objects.clear();
         this._pending.clear();
+        this._scoped.clear();
     }
 
     // -------------------------------------------------------------------------
-    private _post(data: Message): void {
-        this._channel.postMessage(this._serialize(data));
+    // `made` collects the handles this message minted, for a caller that has
+    // to release them later
+    private _post(data: Message, made?: number[]): void {
+        this._channel.postMessage(this._serialize({ rorpc: VERSION, ...data }, made));
     }
 
     // -------------------------------------------------------------------------
-    private _serialize(data: Message): string {
+    private _serialize(data: Message, made?: number[]): string {
         // bound here because the replacer has to be a plain function - its
         // `this` is the holder object, not the Host
         const hook = this._options.serialize?.bind(this);
         const wanted = this._options.remote ?? has_methods;
-        const remote = this.remote.bind(this);
+        const mint = (value: unknown) => {
+            const marker = this.remote(value);
+            made?.push(marker.__data__.handle);
+            return marker;
+        };
         // JSON.stringify offers the replacer the whole message first, under an
         // empty key. That one is the envelope every reply travels in, not a
         // value being sent, so no predicate gets a say over it
@@ -128,7 +156,7 @@ export class Host {
                 return value;
             }
             if (raw instanceof Error) {
-                return encode_error(raw);
+                return encode_error(raw, CODES.APPLICATION);
             }
             const result = hook ? hook(raw) : raw;
             if (result !== raw) {
@@ -137,7 +165,7 @@ export class Host {
                 return result;
             }
             if (wanted(raw)) {
-                return remote(raw);
+                return mint(raw);
             }
             // nothing claimed the value, so fall back to `value` and let the
             // ordinary JSON conventions (Date#toJSON and friends) apply
@@ -157,16 +185,16 @@ export class Host {
         try {
             const data = JSON.parse(text, (_key, value) => {
                 if (is_function_marker(value)) {
-                    const [id, length] = value.__data__;
-                    return this._callback(id, length);
+                    const { callback, arity } = value.__data__;
+                    return this._callback(callback, arity);
                 }
                 if (is_object_marker(value)) {
-                    const [id] = value.__data__;
-                    if (!this._objects.has(id)) {
-                        deferred = deferred ?? invalid_handle(id);
+                    const { handle } = value.__data__;
+                    if (!this._objects.has(handle)) {
+                        deferred = deferred ?? invalid_handle(handle);
                         return undefined;
                     }
-                    return this._objects.get(id);
+                    return this._objects.get(handle);
                 }
                 if (is_error_marker(value)) {
                     return decode_error(value);
@@ -183,14 +211,21 @@ export class Host {
     // a stub standing in for a function that lives on the client. Calling it
     // sends the arguments over and resolves once the client replies.
     // -------------------------------------------------------------------------
-    private _callback(id: number, length: number) {
+    private _callback(id: number, arity?: number) {
         return (...args: unknown[]): Promise<unknown> => {
             const call = ++this._call_id;
             return new Promise((resolve, reject) => {
                 this._pending.set(call, { resolve, reject });
-                // trim to the declared arity: callers like jQuery pass extras
-                // (event objects, indexes) that usually cannot be serialized
-                this._post({ callback: id, call, args: args.slice(0, length) });
+                // §11.2: a limit only if the client asked for one. Callers
+                // like jQuery pass extras (event objects, elements) that a
+                // client usually cannot take, so most ask for one
+                const sent = typeof arity === 'number' ? args.slice(0, arity) : args;
+                // anything kept back for these arguments belongs to this call
+                const made: number[] = [];
+                this._post({ callback: id, call, args: sent }, made);
+                if (made.length) {
+                    this._scoped.set(call, made);
+                }
             });
         };
     }
@@ -202,10 +237,18 @@ export class Host {
             return;
         }
         const { data, error } = parsed;
+        // §5.2. The check comes after the message has been classified, not
+        // before: only a would-be request may be answered with an error, or a
+        // reply overheard on a shared bus would draw one, which the peer's
+        // host would answer in turn - the storm the `ops` test below prevents
+        const versioned = compatible(data.rorpc);
 
         // a client callback finished - `callback` is absent, which is what
         // distinguishes a result coming back from an invocation going out
         if (typeof data.call === 'number' && data.callback === undefined) {
+            if (!versioned) {
+                return;
+            }
             const entry = this._pending.get(data.call);
             if (entry) {
                 this._pending.delete(data.call);
@@ -215,10 +258,23 @@ export class Host {
                     entry.resolve(data.result);
                 }
             }
+            // the call is over, so the handles it needed are too. This runs
+            // after the reply was read, so a handle the client sent back was
+            // already resolved to its object
+            const made = this._scoped.get(data.call);
+            if (made) {
+                this._scoped.delete(data.call);
+                for (const handle of made) {
+                    this._objects.delete(handle);
+                }
+            }
             return;
         }
 
         if (typeof data.release === 'number') {
+            if (!versioned) {
+                return;
+            }
             this._objects.delete(data.release);
             return;
         }
@@ -230,6 +286,13 @@ export class Host {
         // answering one draws an error carrying the same id, which the other
         // host answers in turn. Two tabs, one click, no end.
         if (typeof data.id !== 'number' || !Array.isArray(data.ops)) {
+            return;
+        }
+
+        // a request this host cannot speak to is the one case that is worth
+        // answering: the peer is waiting, and a silent drop looks like a hang
+        if (!versioned) {
+            this._post({ id: data.id, error: version_mismatch(data.rorpc) });
             return;
         }
 
@@ -250,6 +313,18 @@ export class Host {
     // the receiver a call binds to (whatever the value was read off of) and
     // `value` is the running result.
     // -------------------------------------------------------------------------
+    // a predicate's answer, refused loudly when it is not a boolean: a Proxy
+    // trap written here by mistake would return a value, and every value is
+    // truthy, which would quietly permit everything
+    private _permits(which: 'get' | 'set', key: string): boolean {
+        const rule = this._options[which] ?? safe_key;
+        const allowed = rule(key);
+        if (typeof allowed !== 'boolean') {
+            throw internal(`${which}() must answer true or false, not ${typeof allowed}`);
+        }
+        return allowed;
+    }
+
     private async _invoke(data: Message): Promise<unknown> {
         const root = await this._root(data);
         const ops = data.ops ?? [];
@@ -259,14 +334,18 @@ export class Host {
             typeof data.object === 'number' ? `#${data.object}` : (data.namespace ?? '');
         for (const op of ops) {
             if (op.type === 'get') {
+                if (!this._permits('get', op.key)) {
+                    throw key_denied(label, op.key, 'read');
+                }
                 object = value;
                 value = (value as Record<string, unknown> | null | undefined)?.[op.key];
                 label += `.${op.key}`;
             } else if (op.type === 'set') {
+                if (!this._permits('set', op.key)) {
+                    throw key_denied(label, op.key, 'write');
+                }
                 if (value === null || value === undefined) {
-                    throw new TypeError(
-                        `mitty: cannot set ${label}.${op.key} of ${String(value)}`
-                    );
+                    throw cannot_set(label, op.key, value);
                 }
                 (value as Record<string, unknown>)[op.key] = op.value;
                 label += `.${op.key}`;
@@ -279,7 +358,7 @@ export class Host {
                 object = undefined;
             } else {
                 if (typeof value !== 'function') {
-                    throw new TypeError(`mitty: ${label} is not a function`);
+                    throw not_a_function(label);
                 }
                 value = await (value as (...args: unknown[]) => unknown).apply(
                     object,
@@ -303,11 +382,11 @@ export class Host {
             return this._objects.get(data.object);
         }
         if (typeof data.namespace !== 'string') {
-            throw new Error('mitty: request has neither a module name nor a handle');
+            throw invalid_request('request has neither a module name nor a handle');
         }
         const module = await this._options.resolve(data.namespace);
         if (module === null || module === undefined) {
-            throw new Error(`mitty: unknown module '${data.namespace}'`);
+            throw unknown_module(data.namespace);
         }
         return module;
     }

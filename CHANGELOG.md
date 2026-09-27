@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 
 Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org).
 
+## [0.5.0] - 2026-09-27
+
+The wire format is now specified as [RO/RPC 1.0](https://rorpc.org/). Both ends must run 0.5.0.
+
+### Breaking
+
+- Every message carries `"rorpc": "1.0"`. A message without it, or from another major, is refused.
+- `__data__` in a marker is an object with named members, not a positional array.
+- A 0.4.x peer and a 0.5.0 peer cannot talk to each other in either direction.
+
+### Features
+
+- A host sends a `code` on each error it raises, so a caller can test the cause and not the message.
+- A caught error carries that `code`, e.g. `-32601` for a module that does not resolve.
+- `stack` is absent when there is none, in place of the `null` the array form needed.
+- A handle made for a callback argument now belongs to that call. The host releases it when the call ends.
+- `arity` on a function marker is optional. When it is absent the host sends every argument.
+- A chain cannot read or write `__proto__`, `constructor` or `prototype`. This stops it from reaching a prototype.
+- New `get` and `set` options on the host decide which keys a chain may use. Each one answers true or false.
+- New exports: `VERSION`, `CODES` and `safe_key`.
+
+### Known limitation
+
+- A callback gets as many arguments as `Function.length` reports. That count stops at the first default.
+- Thus an optional parameter keeps its default, and a rest parameter gets nothing. Declare plain parameters.
+
 ## [0.4.0] - 2026-09-25
 
 ### Features
