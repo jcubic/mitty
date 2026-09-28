@@ -773,6 +773,80 @@ describe('dir', () => {
         }
     });
 
+    it('does not read a toJSON accessor to classify a property', () => {
+        // has_methods() reads .toJSON to spot a value that says how it
+        // travels, and a plain read invokes an accessor. That is fine when
+        // serializing - JSON.stringify reads it too - but describing a value
+        // must run nothing, so the type goes unstated instead
+        const ran: string[] = [];
+        class OwnAccessor {
+            get toJSON() {
+                ran.push('own');
+                return undefined;
+            }
+            method() {
+                return 1;
+            }
+        }
+        class Inherited extends OwnAccessor {}
+        class Throws {
+            get toJSON(): undefined {
+                throw new Error('a getter ran while describing');
+            }
+            method() {
+                return 1;
+            }
+        }
+        const container = {
+            touch() {},
+            own: new OwnAccessor(),
+            inherited: new Inherited(),
+            hostile: new Throws()
+        };
+        const { properties } = describe_value(container);
+        const type = (name: string) => properties.find(p => p.name === name)?.type;
+
+        expect(ran).toEqual([]);
+        expect(type('own')).toBeUndefined();
+        expect(type('inherited')).toBeUndefined();
+        expect(type('hostile')).toBeUndefined();
+        // and all three are still listed, with what is knowable about them
+        expect(properties.map(p => p.name)).toEqual(['hostile', 'inherited', 'own']);
+    });
+
+    it('still classifies a plain toJSON method, and everything else', () => {
+        class Travels {
+            toJSON() {
+                return { flat: true };
+            }
+            method() {
+                return 1;
+            }
+        }
+        class Rich {
+            method() {
+                return 1;
+            }
+        }
+        const container = {
+            touch() {},
+            travels: new Travels(),
+            rich: new Rich(),
+            bare: { a: 1 },
+            list: [1, 2],
+            text: 'x'
+        };
+        const { properties } = describe_value(container);
+        const type = (name: string) => properties.find(p => p.name === name)?.type;
+        // toJSON as a data property is readable without running anything, so
+        // the existing rule still applies: it travels as data
+        expect(type('travels')).toEqual(['object']);
+        expect(type('rich')).toEqual(['remote']);
+        expect(type('bare')).toEqual(['object']);
+        expect(type('list')).toEqual(['array']);
+        expect(type('text')).toEqual(['string']);
+    });
+
     it('does not advertise a method that a nearer member hides', () => {
         // a nearer data property or accessor is what a `get` would actually
         // reach, so the method further along the chain is not there to call

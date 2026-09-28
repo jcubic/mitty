@@ -17,6 +17,7 @@ Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic 
 - `dir()` answers two lists: `methods` and `properties`. Each entry has the same shape as its neighbours.
 - A property says `readonly`, and says `type` only when the host can learn it without reading the value.
 - A getter is never read to describe it. Reading runs code, and describing a value must not.
+- A `toJSON` accessor is not read either. The type of that property goes unstated, because finding it out runs code.
 - New `describe` option on the host. It says what `dir()` answers. Return `null` to refuse.
 - New `describe()` export. It is the default, and reads the value and its prototype chain.
 - A `describe` entry with no string name is an error. The key filter cannot judge a name that is not a string.

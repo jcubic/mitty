@@ -101,6 +101,24 @@ export function repr(value: unknown): string {
 // `object` when the value is one the host would keep behind a handle, because
 // that is what the client will actually receive.
 // -----------------------------------------------------------------------------
+// Is `toJSON` something that can be looked at without being run? has_methods()
+// reads it plainly, to spot a value that has already said how it travels, and
+// a plain read invokes an accessor. That is the right thing when serializing,
+// where JSON.stringify is about to read it anyway - but describing a value must
+// run nothing at all, so this is asked first.
+function reads_cleanly(value: object): boolean {
+    let proto: object | null = value;
+    while (proto) {
+        const descriptor = Object.getOwnPropertyDescriptor(proto, 'toJSON');
+        if (descriptor) {
+            // the nearest definition is the one a read would reach
+            return !descriptor.get && !descriptor.set;
+        }
+        proto = Object.getPrototypeOf(proto) as object | null;
+    }
+    return true;
+}
+
 function type_of(value: unknown): TypeName | undefined {
     if (value === null) {
         return 'null';
@@ -115,6 +133,11 @@ function type_of(value: unknown): TypeName | undefined {
         case 'function':
             return typeof value;
         case 'object':
+            if (!reads_cleanly(value)) {
+                // whether this travels as data or as a handle turns on what
+                // that accessor gives back, and finding out means running it
+                return undefined;
+            }
             return has_methods(value) ? 'remote' : 'object';
         default:
             // undefined, symbol, bigint - nothing JSON carries, and nothing
