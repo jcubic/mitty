@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Host, HostOptions } from '../src/index';
-import { CODES, dir, is_remote } from '../src/index';
+import type { Description, Host, HostOptions } from '../src/index';
+// aliased: mitty's describe() and vitest's describe() share a name
+import { CODES, describe as describe_value, dir, is_remote } from '../src/index';
 import { cleanup, module_pair, pair } from './helpers';
 
 afterEach(() => {
@@ -750,6 +751,50 @@ describe('dir', () => {
         const { client } = widget_pair({ dir: () => described });
         const handle = await client.require('app').get();
         expect(await dir(handle)).toEqual(described);
+    });
+
+    it('refuses an entry the dir hook did not give a name', async () => {
+        // every other hook return is checked loudly - repr must be a string,
+        // get/set must be boolean - and this one has teeth: the key filter is
+        // safe_key(entry.name), and safe_key answers true for anything that is
+        // not a string, so a malformed name walks past the policy
+        const bad = [
+            { methods: [null], properties: [] },
+            { methods: [{ name: 42 }], properties: [] },
+            { methods: [], properties: [{ name: { toString: () => '__proto__' } }] }
+        ];
+        for (const described of bad) {
+            const { client } = widget_pair({
+                dir: () => described as unknown as Description
+            });
+            const handle = await client.require('app').get();
+            const error = (await dir(handle).catch((e: Error) => e)) as Error;
+            expect(error.message).toMatch(/dir\(\).*name/i);
+        }
+    });
+
+    it('does not advertise a method that a nearer member hides', () => {
+        // a nearer data property or accessor is what a `get` would actually
+        // reach, so the method further along the chain is not there to call
+        const base = {
+            shadowed() {
+                return 'method';
+            },
+            plain() {
+                return 'ok';
+            }
+        };
+        const near: Record<string, unknown> = Object.create(base);
+        near.shadowed = 'a string now';
+        const described = describe_value(near);
+        expect(described.methods.map(m => m.name)).toEqual(['plain']);
+        expect(described.properties.map(p => p.name)).toEqual(['shadowed']);
+
+        const accessor: Record<string, unknown> = Object.create(base);
+        Object.defineProperty(accessor, 'shadowed', { get: () => 5, configurable: true });
+        const second = describe_value(accessor);
+        expect(second.methods.map(m => m.name)).toEqual(['plain']);
+        expect(second.properties.map(p => p.name)).toEqual(['shadowed']);
     });
 
     it('reports a host that does not offer introspection', async () => {
