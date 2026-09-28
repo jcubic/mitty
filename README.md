@@ -49,6 +49,10 @@ transport-agnostic. You can use it to bridge any two contexts capable of sending
 The wire format is specified independently of this implementation as
 **[RO/RPC](https://rorpc.org/)** — Remote Object / Remote Procedure Call.
 
+## Demo
+
+[Online demo with mutliple tabs using Sysend](https://codepen.io/editor/jcubic/pen/01a0d9d8-697e-7dc0-9a2b-eb93adae0dfc).
+
 ## Installation
 
 ```bash
