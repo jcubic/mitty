@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org).
 
-## [0.7.0]
+## [0.7.0] - 2026-09-28
 
 ### Features
 
