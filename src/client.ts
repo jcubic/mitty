@@ -299,7 +299,13 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
     // for ever. So the id is read back without the reviver that threw, and
     // whoever was waiting is told.
     function report_failure(text: string, reason: unknown): void {
-        let frame: { id?: unknown; call?: unknown; callback?: unknown; ops?: unknown };
+        let frame: {
+            rorpc?: unknown;
+            id?: unknown;
+            call?: unknown;
+            callback?: unknown;
+            ops?: unknown;
+        };
         try {
             frame = JSON.parse(text) as typeof frame;
         } catch {
@@ -312,6 +318,15 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
         }
         const failure = reason instanceof Error ? reason : new Error(String(reason));
         if (typeof frame.callback === 'number' && typeof frame.call === 'number') {
+            // the same two questions the ordinary path asks before it answers
+            // an invocation, and for the same reasons. Without the version
+            // check this is the one place that replies to a major it cannot
+            // read; without the ownership check a client answers for a peer it
+            // is merely overhearing on a shared bus, and the host fails a call
+            // that was never this one's to fail
+            if (!compatible(frame.rorpc) || !callbacks.has(frame.callback)) {
+                return;
+            }
             // the host is awaiting this invocation and nothing else will
             // settle it. Its own serialize may fail in turn, and there is
             // nowhere left to report that

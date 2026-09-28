@@ -550,6 +550,46 @@ describe('§5.2 and §7.4 what a peer does with a frame it cannot use', () => {
         expect(error.message).toBe('just a string');
     });
 
+    it('§5.2 does not answer a callback frame from another major', async () => {
+        // the ordinary path drops one of these without a word; the recovery
+        // path must not be the one place that answers a version it cannot read
+        const { client, requests, inject_reply } = wired(
+            { resolve: () => ({ run: async (fn: () => unknown) => await fn() }) },
+            {
+                unserialize: (value: unknown) => {
+                    if (value && typeof value === 'object' && 'callback' in value) {
+                        throw new Error('cannot read it');
+                    }
+                    return value;
+                }
+            }
+        );
+        void Promise.resolve(client.require('m').run(() => 'x')).catch(() => {});
+        await settle();
+        const before = requests.length;
+        inject_reply({ rorpc: '2.0', callback: 1, call: 5, args: [] });
+        await settle();
+        expect(requests.length).toBe(before);
+    });
+
+    it('§7.3 does not answer a callback id it never handed out', async () => {
+        const { requests, inject_reply } = wired(
+            { resolve: () => ({ ok: () => 1 }) },
+            {
+                unserialize: (value: unknown) => {
+                    if (value && typeof value === 'object' && 'callback' in value) {
+                        throw new Error('cannot read it');
+                    }
+                    return value;
+                }
+            }
+        );
+        const before = requests.length;
+        inject_reply({ rorpc: VERSION, callback: 77, call: 5, args: [] });
+        await settle();
+        expect(requests.length).toBe(before);
+    });
+
     it('§5.2 a reply from another major fails the call it names', async () => {
         const { client, inject_reply } = wired({
             resolve: () => ({ ok: () => new Promise(() => {}) })

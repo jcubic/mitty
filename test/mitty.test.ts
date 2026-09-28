@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Description, Host, HostOptions } from '../src/index';
+import type { Channel, ChannelListener, Description, HostOptions } from '../src/index';
 // aliased: mitty's describe() and vitest's describe() share a name
 import {
     CODES,
+    Host,
+    connect,
     describe as describe_value,
     dir,
     is_remote,
@@ -1252,6 +1254,53 @@ describe('types JSON cannot carry', () => {
             .run(() => 'never reached')
             .catch((e: Error) => e)) as Error;
         expect(error.message).toBe('hook blew up');
+    });
+
+    it('does not answer for a callback that is not its own', async () => {
+        // one bus, every peer hears every message. A broken hook in one client
+        // must not fail a call another client owns - that is the storm the
+        // `ops` discriminator exists to prevent, arriving by another door
+        class Bus {
+            private peers: { listeners: ChannelListener[] }[] = [];
+            end(): Channel {
+                const me = { listeners: [] as ChannelListener[] };
+                this.peers.push(me);
+                return {
+                    addEventListener: (_t: string, l: ChannelListener) =>
+                        me.listeners.push(l),
+                    removeEventListener: () => {},
+                    postMessage: (message: string) =>
+                        queueMicrotask(() =>
+                            this.peers.forEach(peer => {
+                                if (peer !== me) {
+                                    peer.listeners.forEach(l => l({ data: message }));
+                                }
+                            })
+                        )
+                };
+            }
+        }
+        const bus = new Bus();
+        const host = new Host({
+            channel: bus.end(),
+            resolve: () => ({ run: async (fn: () => unknown) => `got ${await fn()}` })
+        });
+        const noisy = connect(bus.end(), {
+            unserialize: (value: unknown) => {
+                if (value && typeof value === 'object' && 'callback' in value) {
+                    throw new Error('not mine to read');
+                }
+                return value;
+            }
+        });
+        const owner = connect(bus.end());
+        try {
+            expect(await owner.require('m').run(() => 'answer')).toBe('got answer');
+        } finally {
+            host.close();
+            noisy.close();
+            owner.close();
+        }
     });
 
     it('still refuses a bigint when no hook claims it', async () => {
