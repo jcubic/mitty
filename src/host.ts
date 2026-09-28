@@ -426,11 +426,24 @@ export class Host {
         if (!Array.isArray(listed?.methods) || !Array.isArray(listed?.properties)) {
             throw internal('dir() must answer { methods, properties } or null');
         }
-        const allowed = <T extends { name: string }>(entries: T[]): T[] =>
-            entries.filter(entry => this._permits('get', entry.name));
+        // the filter below is the key policy, and it is safe_key() that
+        // answers it - which says true for anything that is not a string,
+        // because a Set compares by identity. So an entry with no name, or a
+        // name that is an object, would walk straight past a policy that
+        // exists to keep §13.2 keys out of a description
+        const allowed = <T extends { name: string }>(entries: T[], which: string): T[] =>
+            entries.filter(entry => {
+                if (typeof entry?.name !== 'string') {
+                    throw internal(
+                        `dir() gave a ${which} entry whose name is ` +
+                            `${typeof entry?.name}, not a string`
+                    );
+                }
+                return this._permits('get', entry.name);
+            });
         return {
-            methods: allowed(listed.methods),
-            properties: allowed(listed.properties)
+            methods: allowed(listed.methods, 'methods'),
+            properties: allowed(listed.properties, 'properties')
         };
     }
 
