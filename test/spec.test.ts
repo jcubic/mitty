@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { Host, connect, is_remote, safe_key } from '../src/index';
-import type { Channel, ChannelListener, HostOptions } from '../src/index';
+import type { Channel, ChannelListener, Description, HostOptions } from '../src/index';
 
 const VERSION = '1.0';
 
@@ -256,7 +256,7 @@ describe('§6 markers carry a named object', () => {
 });
 
 // -----------------------------------------------------------------------------
-describe('§8.3 dir describes a value', () => {
+describe('§8.3 describe names what a value has', () => {
     it('§8.3 answers one entry per method, with what is known of the params', async () => {
         const { inject, replies } = wired({
             resolve: () => ({
@@ -272,22 +272,88 @@ describe('§8.3 dir describes a value', () => {
             rorpc: VERSION,
             id: 1,
             namespace: 'm',
-            ops: [{ type: 'get', key: 'thing' }, { type: 'dir' }]
+            ops: [{ type: 'get', key: 'thing' }, { type: 'describe' }]
         });
         await settle();
-        expect(frames(replies)[0].result).toEqual([
-            { name: 'append', params: { arity: { required: 1 } } },
-            { name: 'find', params: { arity: { required: 1 } } }
-        ]);
+        expect(frames(replies)[0].result).toEqual({
+            methods: [
+                { name: 'append', params: { arity: { required: 1 } } },
+                { name: 'find', params: { arity: { required: 1 } } }
+            ],
+            properties: []
+        });
     });
 
-    it('§8.3 refuses a dir that is not the last op', async () => {
+    it('§8.3.1 carries a result type list through unchanged', async () => {
+        const { inject, replies } = wired({
+            resolve: () => ({ thing: {} }),
+            // annotated, so this fails to compile if the types regress
+            dir: (): Description => ({
+                methods: [
+                    {
+                        name: 'find',
+                        params: {
+                            arity: { required: 1, optional: 1 },
+                            values: [{ name: 'selector', type: ['string'] }]
+                        },
+                        result: { type: ['remote', 'null'] }
+                    },
+                    { name: 'empty', result: { type: ['void'] } }
+                ],
+                properties: [{ name: 'innerHTML', readonly: false, type: ['string'] }]
+            })
+        });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'get', key: 'thing' }, { type: 'describe' }]
+        });
+        await settle();
+        expect(frames(replies)[0].result).toEqual({
+            methods: [
+                {
+                    name: 'find',
+                    params: {
+                        arity: { required: 1, optional: 1 },
+                        values: [{ name: 'selector', type: ['string'] }]
+                    },
+                    result: { type: ['remote', 'null'] }
+                },
+                { name: 'empty', result: { type: ['void'] } }
+            ],
+            properties: [{ name: 'innerHTML', readonly: false, type: ['string'] }]
+        });
+    });
+
+    it('§8.3.1 does not object to a type name it has never seen', async () => {
+        // the vocabulary is open - a host with richer types may name one of
+        // its own, and a client that fails on it cannot talk to that host
+        const { inject, replies } = wired({
+            resolve: () => ({ thing: {} }),
+            dir: (): Description => ({
+                methods: [{ name: 'when', result: { type: ['DateTime'] } }],
+                properties: [{ name: 'at', type: ['Decimal'] }]
+            })
+        });
+        inject({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'get', key: 'thing' }, { type: 'describe' }]
+        });
+        await settle();
+        expect(frames(replies)[0].result.methods[0].result.type).toEqual(['DateTime']);
+        expect(frames(replies)[0].result.properties[0].type).toEqual(['Decimal']);
+    });
+
+    it('§8.3 refuses a describe that is not the last op', async () => {
         const { inject, replies } = wired({ resolve: () => ({ thing: { a: () => 1 } }) });
         inject({
             rorpc: VERSION,
             id: 1,
             namespace: 'm',
-            ops: [{ type: 'dir' }, { type: 'get', key: 'thing' }]
+            ops: [{ type: 'describe' }, { type: 'get', key: 'thing' }]
         });
         await settle();
         expect(frames(replies)[0].error.__data__.code).toBe(-32600);
@@ -318,7 +384,7 @@ describe('§8.3 dir describes a value', () => {
             rorpc: VERSION,
             id: 1,
             namespace: 'm',
-            ops: [{ type: 'get', key: 'thing' }, { type: 'dir' }]
+            ops: [{ type: 'get', key: 'thing' }, { type: 'describe' }]
         });
         await settle();
         expect(frames(replies)[0].error.__data__.code).toBe(-32014);
@@ -333,12 +399,12 @@ describe('§8.3 dir describes a value', () => {
             rorpc: VERSION,
             id: 1,
             namespace: 'm',
-            ops: [{ type: 'get', key: 'thing' }, { type: 'dir' }]
+            ops: [{ type: 'get', key: 'thing' }, { type: 'describe' }]
         });
         await settle();
-        expect(frames(replies)[0].result.map((m: { name: string }) => m.name)).toEqual([
-            'open'
-        ]);
+        expect(
+            frames(replies)[0].result.methods.map((m: { name: string }) => m.name)
+        ).toEqual(['open']);
     });
 });
 

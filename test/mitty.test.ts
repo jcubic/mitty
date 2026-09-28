@@ -622,19 +622,72 @@ describe('dir', () => {
         const { client } = widget_pair();
         const handle = await client.require('app').get();
         const listed = await dir(handle);
-        expect(listed.map(m => m.name)).toEqual(['append', 'find']);
+        expect(listed.methods.map(m => m.name)).toEqual(['append', 'find']);
+    });
+
+    it('lists properties beside methods, in a list of their own', async () => {
+        const { client } = widget_pair();
+        const handle = await client.require('app').get();
+        const { methods, properties } = await dir(handle);
+        expect(methods.map(m => m.name)).toEqual(['append', 'find']);
+        // label and size are data, computed is a getter
+        expect(properties.map(p => p.name)).toEqual(['computed', 'label', 'size']);
+    });
+
+    it('reports what a data property holds, and whether it can be written', async () => {
+        const { client } = widget_pair();
+        const handle = await client.require('app').get();
+        const { properties } = await dir(handle);
+        const by = (name: string) => properties.find(p => p.name === name);
+        expect(by('label')).toEqual({ name: 'label', readonly: false, type: ['string'] });
+        expect(by('size')).toEqual({ name: 'size', readonly: false, type: ['number'] });
+    });
+
+    it('says a getter is readonly but will not guess its type', async () => {
+        const { client } = widget_pair();
+        const handle = await client.require('app').get();
+        const { properties } = await dir(handle);
+        // `computed` has a getter and no setter, and throws if read - the
+        // type is unknowable without invoking it, so it goes unstated
+        expect(properties.find(p => p.name === 'computed')).toEqual({
+            name: 'computed',
+            readonly: true
+        });
+    });
+
+    it('calls a property remote when reading it would give a handle', async () => {
+        const { client } = pair({
+            resolve: (name: string) =>
+                name === 'app'
+                    ? {
+                          // the container needs a method of its own, or the
+                          // host copies it instead of keeping a handle
+                          get: () => ({
+                              touch() {},
+                              plain: { a: 1 },
+                              rich: new Widget(1)
+                          })
+                      }
+                    : null
+        });
+        const handle = await client.require('app').get();
+        expect(is_remote(handle)).toBe(true);
+        const { properties } = await dir(handle);
+        const by = (name: string) => properties.find(p => p.name === name);
+        expect(by('plain')?.type).toEqual(['object']);
+        expect(by('rich')?.type).toEqual(['remote']);
     });
 
     it('runs a chain first, then describes what it produced', async () => {
         const { client } = widget_pair();
         const listed = await dir(client.require('app').get());
-        expect(listed.map(m => m.name)).toEqual(['append', 'find']);
+        expect(listed.methods.map(m => m.name)).toEqual(['append', 'find']);
     });
 
     it('reports the required arity, which is all Function.length knows', async () => {
         const { client } = widget_pair();
         const handle = await client.require('app').get();
-        const listed = await dir(handle);
+        const listed = (await dir(handle)).methods;
         const append = listed.find(m => m.name === 'append');
         // append(node, mode = 'after') - length stops at the first default
         expect(append?.params?.arity).toEqual({ required: 1 });
@@ -643,28 +696,29 @@ describe('dir', () => {
         });
     });
 
-    it('leaves out Object.prototype and the data properties', async () => {
+    it('leaves out Object.prototype, and keeps data out of the methods', async () => {
         const { client } = widget_pair();
         const handle = await client.require('app').get();
-        const names = (await dir(handle)).map(m => m.name);
-        expect(names).not.toContain('toString');
-        expect(names).not.toContain('hasOwnProperty');
-        expect(names).not.toContain('label');
-        expect(names).not.toContain('size');
+        const { methods, properties } = await dir(handle);
+        const every = [...methods, ...properties].map(m => m.name);
+        expect(every).not.toContain('toString');
+        expect(every).not.toContain('hasOwnProperty');
+        expect(methods.map(m => m.name)).not.toContain('label');
+        expect(methods.map(m => m.name)).not.toContain('size');
     });
 
     it('does not invoke a getter to describe it', async () => {
         const { client } = widget_pair();
         const handle = await client.require('app').get();
-        const names = (await dir(handle)).map(m => m.name);
-        // the getter throws if read - reaching here at all is the assertion
-        expect(names).not.toContain('computed');
+        // `computed` throws when read - reaching here at all is the assertion
+        const { properties } = await dir(handle);
+        expect(properties.map(p => p.name)).toContain('computed');
     });
 
     it('keeps to the host key policy', async () => {
         const { client } = widget_pair({ get: (key: string) => key !== 'find' });
         const handle = await client.require('app').get();
-        const names = (await dir(handle)).map(m => m.name);
+        const names = (await dir(handle)).methods.map(m => m.name);
         expect(names).toContain('append');
         expect(names).not.toContain('find');
     });
@@ -672,34 +726,30 @@ describe('dir', () => {
     it('never lists the keys a chain reaches a prototype through', async () => {
         const { client } = widget_pair();
         const handle = await client.require('app').get();
-        const names = (await dir(handle)).map(m => m.name);
+        const { methods, properties } = await dir(handle);
+        const names = [...methods, ...properties].map(m => m.name);
         for (const unsafe of ['constructor', '__proto__', 'prototype']) {
             expect(names).not.toContain(unsafe);
         }
     });
 
     it('lets the host describe a value itself', async () => {
-        const { client } = widget_pair({
-            dir: () => [
+        const described = {
+            methods: [
                 {
                     name: 'find',
                     params: {
                         arity: { required: 1, optional: 1 },
-                        values: [{ name: 'selector', type: 'string' }]
-                    }
+                        values: [{ name: 'selector', type: ['string', 'remote'] }]
+                    },
+                    result: { type: ['remote', 'null'] }
                 }
-            ]
-        });
+            ],
+            properties: [{ name: 'innerHTML', readonly: false, type: ['string'] }]
+        };
+        const { client } = widget_pair({ dir: () => described });
         const handle = await client.require('app').get();
-        expect(await dir(handle)).toEqual([
-            {
-                name: 'find',
-                params: {
-                    arity: { required: 1, optional: 1 },
-                    values: [{ name: 'selector', type: 'string' }]
-                }
-            }
-        ]);
+        expect(await dir(handle)).toEqual(described);
     });
 
     it('reports a host that does not offer introspection', async () => {

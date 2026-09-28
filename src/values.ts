@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Jakub T. Jankiewicz <https://jakub.jankiewicz.org>
  * Released under MIT license
  */
-import type { Method } from './types';
+import type { Description, Method, Property, TypeName } from './types';
 
 // -----------------------------------------------------------------------------
 // Does this value only make sense with its methods attached?
@@ -97,44 +97,91 @@ export function repr(value: unknown): string {
 }
 
 // -----------------------------------------------------------------------------
-// The default for the Host's `dir` option: every method of `value`, own ones
-// and inherited, sorted by name.
+// Name a value the way RO/RPC §8.3.1 names types. `remote` rather than
+// `object` when the value is one the host would keep behind a handle, because
+// that is what the client will actually receive.
+// -----------------------------------------------------------------------------
+function type_of(value: unknown): TypeName | undefined {
+    if (value === null) {
+        return 'null';
+    }
+    if (Array.isArray(value)) {
+        return 'array';
+    }
+    switch (typeof value) {
+        case 'string':
+        case 'number':
+        case 'boolean':
+        case 'function':
+            return typeof value;
+        case 'object':
+            return has_methods(value) ? 'remote' : 'object';
+        default:
+            // undefined, symbol, bigint - nothing JSON carries, and nothing
+            // §8.3.1 names. Better unstated than wrong
+            return undefined;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// The default for the Host's `dir` option: what `value` can do and what it
+// holds, each sorted by name.
 //
 // The prototype chain is walked for the same reason has_methods() walks it - a
 // class keeps its methods there, so own properties alone would describe almost
 // nothing. Object.prototype and Function.prototype are the floor: `toString`
 // and `call` are on everything and say nothing about this value.
 //
-// Only `required` is filled in. Function.length counts the parameters before
-// the first default or rest, so `append(node, mode = 'after')` reports 1. That
-// is the truth about what the method requires, and everything JavaScript can
-// tell us about what it accepts - see the RO/RPC note on arity.
+// What goes unsaid is as deliberate as what is said. A method's `result` is
+// absent because a JavaScript function does not carry a return type. A
+// parameter's name and type are absent because they are not recoverable - a
+// minified `find(e, t)` has lost them. `arity.required` is Function.length,
+// which counts the parameters before the first default, so
+// `append(node, mode = 'after')` reports 1 and cannot say a second is taken.
+// A host that knows its own API should supply its own `dir`.
 // -----------------------------------------------------------------------------
-export function methods(value: unknown): Method[] {
+export function describe(value: unknown): Description {
+    const methods = new Map<string, Method>();
+    const properties = new Map<string, Property>();
     if (value === null || (typeof value !== 'object' && typeof value !== 'function')) {
-        return [];
+        return { methods: [], properties: [] };
     }
-    const found = new Map<string, Method>();
     let proto: object | null = value as object;
     while (proto && proto !== Object.prototype && proto !== Function.prototype) {
         for (const key of Object.getOwnPropertyNames(proto)) {
             // a nearer definition shadows a further one, so the first sighting
-            // of a name is the one that would actually be called
-            if (key === 'constructor' || found.has(key)) {
+            // of a name is the one that would actually be reached
+            if (key === 'constructor' || methods.has(key) || properties.has(key)) {
                 continue;
             }
-            // the descriptor, not the property: a getter is not a method, and
-            // invoking one to find that out could do anything
+            // the descriptor, not the property: reading a getter to find out
+            // what it is could do anything
             const descriptor = Object.getOwnPropertyDescriptor(proto, key);
-            if (typeof descriptor?.value !== 'function') {
+            if (!descriptor) {
                 continue;
             }
-            found.set(key, {
+            if (typeof descriptor.value === 'function') {
+                methods.set(key, {
+                    name: key,
+                    params: { arity: { required: descriptor.value.length } }
+                });
+                continue;
+            }
+            if (descriptor.get || descriptor.set) {
+                // an accessor: writable is knowable, the type is not
+                properties.set(key, { name: key, readonly: !descriptor.set });
+                continue;
+            }
+            const type = type_of(descriptor.value);
+            properties.set(key, {
                 name: key,
-                params: { arity: { required: descriptor.value.length } }
+                readonly: !descriptor.writable,
+                ...(type ? { type: [type] } : {})
             });
         }
         proto = Object.getPrototypeOf(proto) as object | null;
     }
-    return [...found.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
+    const by_name = <T extends { name: string }>(entries: Map<string, T>): T[] =>
+        [...entries.values()].sort((a, b) => (a.name < b.name ? -1 : 1));
+    return { methods: by_name(methods), properties: by_name(properties) };
 }

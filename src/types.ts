@@ -71,7 +71,7 @@ export type Op =
     | { type: 'get'; key: string }
     | { type: 'set'; key: string; value: unknown }
     | { type: 'call'; args: unknown[] }
-    | { type: 'dir' };
+    | { type: 'describe' };
 
 // -----------------------------------------------------------------------------
 // What `dir()` answers: one entry per method the host is willing to name.
@@ -83,9 +83,39 @@ export type Op =
 // source. A language with real reflection can fill the rest, and a host that
 // knows its own API can supply all of it through the `dir` option.
 // -----------------------------------------------------------------------------
+// RO/RPC §8.3.1. The six JSON types, plus the two RO/RPC adds - `remote` for
+// a handle and `function` for a callback - plus `void` for a method that
+// yields nothing, which `null` does not cover: null is a value, void is the
+// absence of one.
+//
+// The vocabulary is open. A host with richer types of its own may name one,
+// and nothing here may reject a name it does not know - a client that fails
+// on an unfamiliar type cannot talk to a host that has any.
+export type TypeName =
+    | 'string'
+    | 'number'
+    | 'boolean'
+    | 'null'
+    | 'array'
+    | 'object'
+    | 'remote'
+    | 'function'
+    | 'void'
+    | (string & {});
+
 export interface Param {
     name?: string;
-    type?: string;
+    // a list for the same reason `result.type` is one: a parameter that takes
+    // a union is ordinary, and one shape spares every caller a branch on
+    // whether it was handed a name or a list of them
+    type?: TypeName[];
+}
+
+// Always a list, never a bare name. A union is the common case - find() gives
+// a selection or nothing - and one shape means no caller has to branch on
+// whether it was given a name or a list of them.
+export interface Result {
+    type: TypeName[];
 }
 
 export interface Arity {
@@ -100,6 +130,31 @@ export interface Method {
         arity?: Arity;
         values?: Param[];
     };
+    // what a call yields. JavaScript cannot know this - a return type is not
+    // carried by a function - so mitty's default never fills it in. A host
+    // generated from a typed source, TypeScript or otherwise, can.
+    result?: Result;
+}
+
+// A member that holds a value rather than doing something. `innerHTML` on a
+// DOM node is one, and so is a plain field.
+//
+// `type` is what reading it gives. For a stored value that is knowable by
+// looking, and reading it runs no code. For a getter it is not knowable at
+// all without calling the getter, which describing a value must never do -
+// so a getter says `readonly` and stops there.
+export interface Property {
+    name: string;
+    readonly?: boolean;
+    type?: TypeName[];
+}
+
+// What `dir` answers. Two lists rather than one tagged list: an entry in
+// either is the same shape as its neighbours, so nothing has to be
+// discriminated before it can be read.
+export interface Description {
+    methods: Method[];
+    properties: Property[];
 }
 
 // -----------------------------------------------------------------------------

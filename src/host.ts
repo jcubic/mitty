@@ -23,8 +23,8 @@ import {
     unknown_module,
     version_mismatch
 } from './protocol';
-import type { Channel, ChannelListener, Method, ObjectMarker, Op } from './types';
-import { has_methods, methods, repr, safe_key } from './values';
+import type { Channel, ChannelListener, Description, ObjectMarker, Op } from './types';
+import { describe, has_methods, repr, safe_key } from './values';
 
 export interface HostOptions {
     // the transport this host listens on; the host never closes it
@@ -58,7 +58,7 @@ export interface HostOptions {
     // what dir() on the client answers for a value kept here. Defaults to
     // methods(). Return null to refuse - RO/RPC makes introspection optional,
     // because not every language can look a value up like this.
-    dir?(this: Host, value: unknown): Method[] | null;
+    dir?(this: Host, value: unknown): Description | null;
 }
 
 interface Message {
@@ -365,11 +365,11 @@ export class Host {
                 object = value;
                 value = (value as Record<string, unknown> | null | undefined)?.[op.key];
                 label += `.${op.key}`;
-            } else if (op.type === 'dir') {
+            } else if (op.type === 'describe') {
                 // §8.3: terminal. What comes back is a description, not the
                 // value, so a step after it would have nothing to run against
                 if (op !== ops[ops.length - 1]) {
-                    throw invalid_request('dir must be the last op in a chain');
+                    throw invalid_request('describe must be the last op in a chain');
                 }
                 return this._describe(value, label);
             } else if (op.type === 'set') {
@@ -417,16 +417,21 @@ export class Host {
     // methods". The key policy applies here too - a name a chain may not read
     // is a name this must not hand out, or `dir` becomes the way to find the
     // keys `get` refuses.
-    private _describe(value: unknown, label: string): Method[] {
-        const rule = this._options.dir ?? methods;
+    private _describe(value: unknown, label: string): Description {
+        const rule = this._options.dir ?? describe;
         const listed = rule.call(this, value);
         if (listed === null || listed === undefined) {
             throw no_introspection(label || 'this value');
         }
-        if (!Array.isArray(listed)) {
-            throw internal(`dir() must answer an array or null, not ${typeof listed}`);
+        if (!Array.isArray(listed?.methods) || !Array.isArray(listed?.properties)) {
+            throw internal('dir() must answer { methods, properties } or null');
         }
-        return listed.filter(method => this._permits('get', method.name));
+        const allowed = <T extends { name: string }>(entries: T[]): T[] =>
+            entries.filter(entry => this._permits('get', entry.name));
+        return {
+            methods: allowed(listed.methods),
+            properties: allowed(listed.properties)
+        };
     }
 
     // -------------------------------------------------------------------------
