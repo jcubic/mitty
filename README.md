@@ -716,8 +716,18 @@ A `serialize` hook claims a value only by **returning something else**. Hand the
 straight back and mitty's own handling is untouched, so a handle stays a handle and an
 error stays an error.
 
-Without a hook, a `BigInt` is refused with a clear error and a `RegExp` would flatten to
-`{}` the way `JSON.stringify` leaves it.
+Without a hook, the same value behaves differently depending on which way it is going, and
+neither way is useful:
+
+| value    | worker → host                                       | host → worker                                                    |
+| -------- | --------------------------------------------------- | ---------------------------------------------------------------- |
+| `BigInt` | refused, with an error naming the argument          | refused, with JSON's own `Do not know how to serialize a BigInt` |
+| `RegExp` | arrives as `{}`, the way `JSON.stringify` leaves it | arrives as a **handle**                                          |
+
+A returned `RegExp` becomes a handle because `has_methods()` finds `test` and `exec` on its
+prototype, so the host keeps it rather than copying it. That is not wrong — `await re.test('x')`
+works — but it is a remote object, not a `RegExp`: `typeof` says `'function'`, and
+`'abc'.match(re)` cannot use it. A hook is what makes it a real one on both sides.
 
 ## API
 
