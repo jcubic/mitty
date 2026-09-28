@@ -113,11 +113,10 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
     // "circular structure" error that follows names no channel and no argument.
     // No article, so a caller can put one in front of it or a word between
     function describe_value(value: unknown): string {
+        // only ever called for a value that closed a circle, which is always
+        // a non-null object - hence no primitive case here
         if (Array.isArray(value)) {
             return 'array';
-        }
-        if (typeof value !== 'object' || value === null) {
-            return typeof value;
         }
         const node = value as { nodeType?: unknown; nodeName?: unknown };
         if (typeof node.nodeType === 'number' && typeof node.nodeName === 'string') {

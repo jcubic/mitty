@@ -311,7 +311,10 @@ export class Host {
         // host overhears the replies meant for another peer's client, and
         // answering one draws an error carrying the same id, which the other
         // host answers in turn. Two tabs, one click, no end.
-        if (typeof data.id !== 'number' || !Array.isArray(data.ops)) {
+        // held in a const so the narrowing survives the calls below, and so
+        // _invoke() can be handed a list it need not re-check
+        const ops = data.ops;
+        if (typeof data.id !== 'number' || !Array.isArray(ops)) {
             return;
         }
 
@@ -326,7 +329,7 @@ export class Host {
             if (error) {
                 throw error;
             }
-            this._post({ id: data.id, result: await this._invoke(data) });
+            this._post({ id: data.id, result: await this._invoke(data, ops) });
         } catch (thrown) {
             const failure = thrown instanceof Error ? thrown : new Error(String(thrown));
             this._post({ id: data.id, error: failure });
@@ -351,13 +354,15 @@ export class Host {
         return allowed;
     }
 
-    private async _invoke(data: Message): Promise<unknown> {
-        const root = await this._root(data);
-        const ops = data.ops ?? [];
+    // `ops` arrives already checked - _on_message drops anything else as a
+    // reply overheard from another peer - and _root() has refused a request
+    // naming neither a handle nor a module before this sees one. Both are
+    // facts here, not fallbacks that could never fire
+    private async _invoke(data: Message, ops: Op[]): Promise<unknown> {
+        const { value: root, label: start } = await this._root(data);
         let object: unknown = root;
         let value: unknown = root;
-        let label =
-            typeof data.object === 'number' ? `#${data.object}` : (data.namespace ?? '');
+        let label = start;
         for (const op of ops) {
             if (op.type === 'get') {
                 if (!this._permits('get', op.key)) {
@@ -449,12 +454,14 @@ export class Host {
     }
 
     // -------------------------------------------------------------------------
-    private async _root(data: Message): Promise<unknown> {
+    // the value a chain starts from, and the name to put in front of it when
+    // something goes wrong further along
+    private async _root(data: Message): Promise<{ value: unknown; label: string }> {
         if (typeof data.object === 'number') {
             if (!this._objects.has(data.object)) {
                 throw invalid_handle(data.object);
             }
-            return this._objects.get(data.object);
+            return { value: this._objects.get(data.object), label: `#${data.object}` };
         }
         if (typeof data.namespace !== 'string') {
             throw invalid_request('request has neither a module name nor a handle');
@@ -463,6 +470,6 @@ export class Host {
         if (module === null || module === undefined) {
             throw unknown_module(data.namespace);
         }
-        return module;
+        return { value: module, label: data.namespace };
     }
 }
