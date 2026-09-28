@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Description, Host, HostOptions } from '../src/index';
 // aliased: mitty's describe() and vitest's describe() share a name
-import { CODES, describe as describe_value, dir, is_remote } from '../src/index';
+import {
+    CODES,
+    describe as describe_value,
+    dir,
+    is_remote,
+    repr as repr_of
+} from '../src/index';
 import { cleanup, module_pair, pair } from './helpers';
 
 afterEach(() => {
@@ -884,5 +890,221 @@ describe('dir', () => {
     it('rejects anything that is not a remote value', async () => {
         await expect(dir({ find: () => 1 })).rejects.toThrow(/remote/i);
         await expect(dir(42)).rejects.toThrow(/remote/i);
+    });
+});
+
+describe('values', () => {
+    it('names a primitive by its typeof', () => {
+        expect(repr_of(42)).toBe('#<number>');
+        expect(repr_of('x')).toBe('#<string>');
+        expect(repr_of(true)).toBe('#<boolean>');
+        expect(repr_of(undefined)).toBe('#<undefined>');
+        expect(repr_of(() => 1)).toBe('#<function>');
+        // null goes down the same path, and typeof null is 'object' - the
+        // quirk is JavaScript's, and this is what a caller will see
+        expect(repr_of(null)).toBe('#<object>');
+    });
+
+    it('has nothing to describe about a value that is not an object', () => {
+        const nothing = { methods: [], properties: [] };
+        expect(describe_value(42)).toEqual(nothing);
+        expect(describe_value('x')).toEqual(nothing);
+        expect(describe_value(null)).toEqual(nothing);
+        expect(describe_value(undefined)).toEqual(nothing);
+    });
+
+    it('types a property that holds nothing, and leaves the unsendable unstated', () => {
+        const container = {
+            touch() {},
+            empty: null,
+            missing: undefined,
+            big: BigInt(1),
+            tag: Symbol('t')
+        };
+        const { properties } = describe_value(container);
+        const type = (name: string) => properties.find(p => p.name === name)?.type;
+        // null is a value JSON carries, so it is named
+        expect(type('empty')).toEqual(['null']);
+        // these three are not, and §8.3.1 has no name for them
+        expect(type('missing')).toBeUndefined();
+        expect(type('big')).toBeUndefined();
+        expect(type('tag')).toBeUndefined();
+        // all four are still listed - only the type is withheld
+        expect(properties.map(p => p.name)).toEqual(['big', 'empty', 'missing', 'tag']);
+    });
+
+    it('skips a key that owns no descriptor', () => {
+        // a Proxy may name a key in ownKeys and then decline to describe it
+        const ghostly = new Proxy(
+            {},
+            {
+                ownKeys: () => ['ghost'],
+                getOwnPropertyDescriptor: () => undefined
+            }
+        );
+        expect(Object.getOwnPropertyNames(ghostly)).toEqual(['ghost']);
+        expect(describe_value(ghostly)).toEqual({ methods: [], properties: [] });
+    });
+});
+
+describe('host housekeeping', () => {
+    it('refuses a release() that names no handle', () => {
+        const { host } = module_pair('app', {});
+        expect(() => host.release('nope' as unknown as number)).toThrow(/release\(\)/);
+        expect(() => host.release({} as never)).toThrow(/release\(\)/);
+        // a marker and a bare id are both fine, and both say it was not there
+        expect(host.release(999)).toBe(false);
+    });
+
+    it('carries an Error given as an argument across as an Error', async () => {
+        let seen: unknown;
+        const { client } = module_pair('app', {
+            take: (value: unknown) => {
+                seen = value;
+                return value instanceof Error;
+            }
+        });
+        const sent = new TypeError('from the client');
+        expect(await client.require('app').take(sent)).toBe(true);
+        expect((seen as Error).name).toBe('TypeError');
+        expect((seen as Error).message).toBe('from the client');
+        // the client's own errors carry no protocol code
+        expect((seen as { code?: number }).code).toBeUndefined();
+    });
+
+    it('rejects the caller when a callback of theirs throws', async () => {
+        const { client } = module_pair('app', {
+            run: async (fn: () => unknown) => {
+                try {
+                    return await fn();
+                } catch (error) {
+                    return `caught: ${(error as Error).message}`;
+                }
+            }
+        });
+        const result = await client.require('app').run(() => {
+            throw new Error('callback said no');
+        });
+        expect(result).toBe('caught: callback said no');
+    });
+
+    it('refuses a describe hook that answers the wrong shape', async () => {
+        const { client } = module_pair('app', { thing: { go() {} } });
+        const { client: bad } = pair({
+            resolve: (name: string) => (name === 'app' ? { go() {} } : null),
+            describe: (() => [{ name: 'go' }]) as unknown as () => Description
+        });
+        void client;
+        const error = (await dir(await bad.require('app')).catch(
+            (e: Error) => e
+        )) as Error;
+        expect(error.message).toMatch(/describe\(\).*methods, properties/);
+    });
+});
+
+describe('edges of the wire', () => {
+    it('names a circular array as an array', async () => {
+        const { client } = module_pair('app', { echo: (v: unknown) => v });
+        const loop: unknown[] = [1, 2];
+        loop.push(loop);
+        await expect(client.require('app').echo(loop)).rejects.toThrow(
+            /a circular array/
+        );
+    });
+
+    it('names an object whose constructor has none', async () => {
+        const bare = Object.create(null) as Record<string, unknown>;
+        bare.method = () => 1;
+        const { client } = module_pair('app', { get: () => bare });
+        const handle = await client.require('app').get();
+        // no prototype, so no constructor to take a name from
+        expect(String(handle)).toBe('#<object>');
+    });
+
+    it('reuses the id when the same callback is passed twice', async () => {
+        const seen: unknown[] = [];
+        const { client } = pair({
+            resolve: (name: string) =>
+                name === 'app' ? { run: async (fn: () => unknown) => await fn() } : null,
+            unserialize(value: unknown) {
+                if (value && typeof value === 'object' && 'callback' in value) {
+                    seen.push((value as { callback: unknown }).callback);
+                }
+                return value;
+            }
+        });
+        const callback = () => 'answered';
+        expect(await client.require('app').run(callback)).toBe('answered');
+        expect(await client.require('app').run(callback)).toBe('answered');
+        // one function, one id - the table is keyed both ways so it is reused
+        expect(seen).toEqual([1, 1]);
+    });
+
+    it('lets a throwing toJSON keep its own error', async () => {
+        // the value is reachable, but what JSON gave up on sits under a
+        // toJSON() result - off the path the caller wrote, so mitty says
+        // nothing about where it was and hands back the original
+        const { client } = module_pair('app', { echo: (v: unknown) => v });
+        const smuggler = {
+            toJSON() {
+                const loop: Record<string, unknown> = {};
+                loop.self = loop;
+                return loop;
+            }
+        };
+        const error = (await client
+            .require('app')
+            .echo(smuggler)
+            .catch((e: Error) => e)) as Error;
+        expect(error.message).toMatch(/circular structure/i);
+        expect(error.message).not.toMatch(/^mitty:/);
+    });
+
+    it('answers undefined for a symbol key it does not know', async () => {
+        const { client } = module_pair('app', { thing: { go() {} } });
+        const chain = client.require('app').thing as unknown as Record<symbol, unknown>;
+        expect(chain[Symbol.iterator]).toBeUndefined();
+        expect(chain[Symbol.asyncIterator]).toBeUndefined();
+        // the two it does know still answer
+        expect(chain[Symbol.for('@jcubic/mitty/handle')]).toBeTruthy();
+        expect(typeof chain[Symbol.toPrimitive]).toBe('function');
+    });
+
+    it('ignores an assignment to a symbol key', async () => {
+        const target: Record<string, unknown> = { go() {}, label: 'before' };
+        const { client } = module_pair('app', { get: () => target });
+        const handle = await client.require('app').get();
+        const tag = Symbol('tag');
+        (handle as unknown as Record<symbol, unknown>)[tag] = 'nope';
+        await new Promise(resolve => setTimeout(resolve, 20));
+        // nothing was sent, and the host object is untouched
+        expect(Object.getOwnPropertySymbols(target)).toEqual([]);
+        expect(target.label).toBe('before');
+    });
+
+    it('turns a host that throws something other than an Error into one', async () => {
+        const { client } = module_pair('app', {
+            rude: () => {
+                throw 'just a string';
+            }
+        });
+        const error = (await client
+            .require('app')
+            .rude()
+            .catch((e: Error) => e)) as Error;
+        expect(error.message).toBe('just a string');
+    });
+
+    it('lets the last of several sets own the queue', async () => {
+        const target: Record<string, unknown> = { go() {}, a: 0, b: 0, c: 0 };
+        const { client } = module_pair('app', { get: () => target });
+        const handle = await client.require('app').get();
+        handle.a = 1;
+        handle.b = 2;
+        handle.c = 3;
+        // the read behind them sees all three, whichever took over the queue
+        expect(await handle.a).toBe(1);
+        expect(await handle.b).toBe(2);
+        expect(await handle.c).toBe(3);
     });
 });

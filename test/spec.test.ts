@@ -6,7 +6,7 @@
  * emitting the wrong wire format is not interoperable with anything.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { Host, connect, is_remote, safe_key } from '../src/index';
+import { Host, connect, dir, is_remote, safe_key } from '../src/index';
 import type {
     Channel,
     ChannelListener,
@@ -79,7 +79,11 @@ function wired(
         // deliver a frame to the host as if a peer had sent it
         inject: (frame: unknown) => client_wire.postMessage(JSON.stringify(frame)),
         // and the other way: a frame the client receives as if from a host
-        inject_reply: (frame: unknown) => host_wire.postMessage(JSON.stringify(frame))
+        inject_reply: (frame: unknown) => host_wire.postMessage(JSON.stringify(frame)),
+        // bytes as they are, for what is not JSON at all. inject() would
+        // stringify a string, and a stringified string is valid JSON
+        raw: (text: string) => client_wire.postMessage(text),
+        raw_reply: (text: string) => host_wire.postMessage(text)
     };
 }
 
@@ -423,6 +427,153 @@ describe('§8.3 describe names what a value has', () => {
         expect(
             frames(replies)[0].result.methods.map((m: { name: string }) => m.name)
         ).toEqual(['open']);
+    });
+});
+
+// -----------------------------------------------------------------------------
+describe('§5.2 and §7.4 what a peer does with a frame it cannot use', () => {
+    it('a host drops a message that is not JSON, without answering', async () => {
+        const { raw, replies, client } = wired({ resolve: () => ({ ok: () => 1 }) });
+        raw('not json at all');
+        raw('{"unclosed": ');
+        await settle();
+        // there is no id to answer to, so there is nothing to answer
+        expect(replies).toEqual([]);
+        // and the host is still listening
+        expect(await client.require('m').ok()).toBe(1);
+    });
+
+    it('a client drops a reply that is not JSON, and stays able to work', async () => {
+        const { client, raw_reply } = wired({ resolve: () => ({ ok: () => 'yes' }) });
+        raw_reply('{ broken');
+        await settle();
+        expect(await client.require('m').ok()).toBe('yes');
+    });
+
+    it('§5.2 a reply from another major fails the call it names', async () => {
+        const { client, inject_reply } = wired({
+            resolve: () => ({ ok: () => new Promise(() => {}) })
+        });
+        const pending = Promise.resolve(client.require('m').ok());
+        await settle();
+        inject_reply({ rorpc: '2.0', id: 1, result: 'hijacked' });
+        await expect(pending).rejects.toThrow(/version '2\.0'/);
+    });
+
+    it('§7.4 a client ignores a callback invocation from another major', async () => {
+        let ran = 0;
+        const { client, inject_reply } = wired({
+            resolve: () => ({ run: (fn: () => unknown) => fn() })
+        });
+        void Promise.resolve(
+            client.require('m').run(() => {
+                ran += 1;
+                return 1;
+            })
+        );
+        await settle();
+        const before = ran;
+        inject_reply({ rorpc: '2.0', callback: 1, call: 99, args: [] });
+        await settle();
+        expect(ran).toBe(before);
+    });
+
+    it('§7.3 a host ignores a callback result for a call it is not waiting on', async () => {
+        const { inject, replies } = wired({ resolve: () => ({ ok: () => 1 }) });
+        inject({ rorpc: VERSION, call: 4321, result: 'from nowhere' });
+        await settle();
+        expect(replies).toEqual([]);
+    });
+
+    it('§8.2 an empty ops list yields the root itself', async () => {
+        const { inject, replies } = wired({ resolve: () => ({ flat: 1 }) });
+        inject({ rorpc: VERSION, id: 1, namespace: 'm', ops: [] });
+        await settle();
+        expect(frames(replies)[0].result).toEqual({ flat: 1 });
+    });
+
+    it('§7.2 a frame with an id but no ops is a Response, and is not answered', async () => {
+        // `ops` is what makes a Request, not `id` - a Response carries an id
+        // too. On a shared bus a host that answered one would start a storm
+        const { inject, replies } = wired({ resolve: () => ({ flat: 1 }) });
+        inject({ rorpc: VERSION, id: 1, namespace: 'm' });
+        inject({ rorpc: VERSION, id: 2, result: 'overheard' });
+        await settle();
+        expect(replies).toEqual([]);
+    });
+
+    it('§7.3 a callback invocation with no args is called with none', async () => {
+        const { client, inject_reply, replies } = wired({
+            resolve: () => ({ run: async (fn: (...a: unknown[]) => unknown) => fn() })
+        });
+        let got: unknown[] | null = null;
+        void Promise.resolve(
+            client.require('m').run((...args: unknown[]) => {
+                got = args;
+                return 'done';
+            })
+        );
+        await settle();
+        void replies;
+        // no `args` member at all, not an empty one
+        inject_reply({ rorpc: VERSION, callback: 1, call: 1 });
+        await settle();
+        expect(got).toEqual([]);
+    });
+
+    it('§8.3 refuses introspection on a module named with an empty string', async () => {
+        const { client } = wired({
+            resolve: (name: string) => (name === '' ? { go() {} } : null),
+            describe: () => null
+        });
+        const error = (await dir(client.require('')).catch((e: Error) => e)) as Error;
+        expect(error.message).toMatch(/does not introspect this value/);
+    });
+
+    it('§7.3 a callback result from another major does not settle the call', async () => {
+        // the real callback never answers, so the only results reaching the
+        // host are the two injected below - the first must be ignored
+        const { client, inject, replies } = wired({
+            resolve: () => ({
+                run: async (fn: () => unknown) => `got ${await fn()}`
+            })
+        });
+        // Promise.resolve adopts the chain, which is what sends it
+        const pending = Promise.resolve(
+            client.require('m').run(() => new Promise(() => {}))
+        );
+        await settle();
+        inject({ rorpc: '2.0', call: 1, result: 'hijacked' });
+        await settle();
+        expect(replies.length).toBe(1); // the invocation, and no answer yet
+        inject({ rorpc: VERSION, call: 1, result: 'real' });
+        expect(await pending).toBe('got real');
+    });
+});
+
+// -----------------------------------------------------------------------------
+describe('§10 a handle that is no longer there', () => {
+    it('§10.3 fails a request carrying a released handle as an argument', async () => {
+        const { client, host, replies } = wired({
+            resolve: () => ({
+                get: () => ({ method: () => 1 }),
+                take: (other: unknown) => typeof other
+            })
+        });
+        const handle = await client.require('m').get();
+        host.release(1);
+        await expect(client.require('m').take(handle)).rejects.toThrow(/invalid handle/i);
+        expect(last(replies).error.__data__.code).toBe(-32602);
+    });
+
+    it('§10.3 fails a request rooted at a released handle', async () => {
+        const { client, host, replies } = wired({
+            resolve: () => ({ get: () => ({ method: () => 'here' }) })
+        });
+        const handle = await client.require('m').get();
+        host.release(1);
+        await expect(handle.method()).rejects.toThrow(/invalid handle/i);
+        expect(last(replies).error.__data__.code).toBe(-32602);
     });
 });
 
