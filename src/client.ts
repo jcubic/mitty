@@ -104,6 +104,8 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
     // keyed both ways to reuse an id when the same function is passed twice.
     const callbacks = new Map<number, Callback>();
     const callback_ids = new Map<Callback, number>();
+    const to_wire = options.serialize;
+    const from_wire = options.unserialize;
 
     // a short name for a value that cannot cross the channel, for an error
     // that says what it is rather than where JSON.stringify gave up on it.
@@ -176,6 +178,14 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
                     note(this, key, raw);
                     if (raw instanceof Error) {
                         return encode_error(raw);
+                    }
+                    // the hook comes before the protocol's own markers, so a
+                    // value it claims is sent its way. It claims one only by
+                    // returning something else - a hook that hands the value
+                    // straight back leaves a handle or a callback alone
+                    const decided = to_wire ? to_wire(raw) : raw;
+                    if (decided !== raw) {
+                        return decided;
                     }
                     const chain = chain_info(raw);
                     if (chain) {
@@ -260,7 +270,9 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
             if (is_error_marker(value)) {
                 return decode_error(value);
             }
-            return value;
+            // anything mitty does not recognise, marker or not, goes to the
+            // hook - that is where an application's own __type__ is decoded
+            return from_wire ? from_wire(value) : value;
         }) as Message;
     }
 

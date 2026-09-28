@@ -1108,3 +1108,125 @@ describe('edges of the wire', () => {
         expect(await handle.c).toBe(3);
     });
 });
+
+describe('types JSON cannot carry', () => {
+    // what a user writes to send a BigInt and a RegExp - neither survives
+    // JSON.stringify: a bigint throws, a regex flattens to {}
+    const encode = (value: unknown) => {
+        if (typeof value === 'bigint') {
+            return { __type__: 'bigint', __data__: { value: value.toString() } };
+        }
+        if (value instanceof RegExp) {
+            return {
+                __type__: 'regex',
+                __data__: { source: value.source, flags: value.flags }
+            };
+        }
+        return value;
+    };
+    const decode = (value: unknown) => {
+        const marker = value as { __type__?: string; __data__?: Record<string, string> };
+        if (marker?.__type__ === 'bigint') {
+            return BigInt(marker.__data__!.value);
+        }
+        if (marker?.__type__ === 'regex') {
+            return new RegExp(marker.__data__!.source, marker.__data__!.flags);
+        }
+        return value;
+    };
+
+    function both_ways(module: Record<string, unknown>) {
+        return pair(
+            {
+                resolve: (name: string) => (name === 'app' ? module : null),
+                serialize: encode,
+                unserialize: decode
+            },
+            { serialize: encode, unserialize: decode }
+        );
+    }
+
+    it('sends a bigint to the host and back', async () => {
+        const seen: unknown[] = [];
+        const { client } = both_ways({
+            double: (n: unknown) => {
+                seen.push(n);
+                return (n as bigint) * BigInt(2);
+            }
+        });
+        const answer = await client.require('app').double(BigInt('9007199254740993'));
+        expect(typeof seen[0]).toBe('bigint');
+        expect(seen[0]).toBe(BigInt('9007199254740993'));
+        expect(answer).toBe(BigInt('18014398509481986'));
+    });
+
+    it('sends a regex to the host and back', async () => {
+        const seen: unknown[] = [];
+        const { client } = both_ways({
+            widen: (re: unknown) => {
+                seen.push(re);
+                return new RegExp((re as RegExp).source, 'gi');
+            }
+        });
+        const answer = await client.require('app').widen(/[a-z]+/i);
+        expect(seen[0]).toBeInstanceOf(RegExp);
+        expect((seen[0] as RegExp).source).toBe('[a-z]+');
+        expect((seen[0] as RegExp).flags).toBe('i');
+        expect(answer).toBeInstanceOf(RegExp);
+        expect(answer.flags).toBe('gi');
+        expect('ABC'.match(answer as RegExp)).toEqual(['ABC']);
+    });
+
+    it('carries them nested inside ordinary data', async () => {
+        const { client } = both_ways({
+            echo: (value: unknown) => value
+        });
+        const answer = await client.require('app').echo({
+            rules: [{ pattern: /^x/, limit: BigInt(10) }]
+        });
+        expect(answer.rules[0].pattern).toBeInstanceOf(RegExp);
+        expect(answer.rules[0].pattern.source).toBe('^x');
+        expect(answer.rules[0].limit).toBe(BigInt(10));
+    });
+
+    it('carries them into and out of a callback', async () => {
+        const { client } = both_ways({
+            run: async (fn: (n: unknown) => unknown) => await fn(BigInt(7))
+        });
+        let given: unknown;
+        const answer = await client.require('app').run((n: unknown) => {
+            given = n;
+            return /ok/g;
+        });
+        expect(given).toBe(BigInt(7));
+        expect(answer).toBeInstanceOf(RegExp);
+        expect(answer.flags).toBe('g');
+    });
+
+    it('still refuses a bigint when no hook claims it', async () => {
+        const { client } = module_pair('app', { echo: (v: unknown) => v });
+        await expect(client.require('app').echo(BigInt(1))).rejects.toThrow(
+            /cannot send .*a bigint/
+        );
+    });
+
+    it('leaves the three reserved types to mitty', async () => {
+        // a hook that returns the value unchanged must not disturb a handle,
+        // a callback or an error
+        const { client } = both_ways({
+            get: () => ({ method: () => 'still remote' }),
+            boom: () => {
+                throw new TypeError('still an error');
+            }
+        });
+        const handle = await client.require('app').get();
+        expect(is_remote(handle)).toBe(true);
+        expect(await handle.method()).toBe('still remote');
+        const error = (await client
+            .require('app')
+            .boom()
+            .catch((e: Error) => e)) as Error;
+        expect(error.name).toBe('TypeError');
+        expect(error.message).toBe('still an error');
+    });
+});
