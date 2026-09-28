@@ -292,11 +292,53 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
         }
     }
 
+    // A frame that will not decode used to mean one thing: bytes that are not
+    // JSON, carrying no id worth recovering. `unserialize` now runs a hook the
+    // caller wrote, so a perfectly readable frame can fail on a value inside
+    // it - and dropping that silently leaves whoever is waiting on it waiting
+    // for ever. So the id is read back without the reviver that threw, and
+    // whoever was waiting is told.
+    function report_failure(text: string, reason: unknown): void {
+        let frame: { id?: unknown; call?: unknown; callback?: unknown; ops?: unknown };
+        try {
+            frame = JSON.parse(text) as typeof frame;
+        } catch {
+            // not JSON at all, so there was never anything to answer
+            return;
+        }
+        if (frame === null || typeof frame !== 'object' || Array.isArray(frame.ops)) {
+            // a request, which this client does not answer either way
+            return;
+        }
+        const failure = reason instanceof Error ? reason : new Error(String(reason));
+        if (typeof frame.callback === 'number' && typeof frame.call === 'number') {
+            // the host is awaiting this invocation and nothing else will
+            // settle it. Its own serialize may fail in turn, and there is
+            // nowhere left to report that
+            try {
+                post({ call: frame.call, error: failure });
+            } catch {
+                on_error(failure);
+            }
+            return;
+        }
+        if (typeof frame.id !== 'number') {
+            return;
+        }
+        const entry = pending.get(frame.id);
+        if (!entry) {
+            return;
+        }
+        pending.delete(frame.id);
+        entry.reject(failure);
+    }
+
     const listener: ChannelListener = event => {
         let data: Message;
         try {
             data = unserialize(event.data);
-        } catch {
+        } catch (error) {
+            report_failure(event.data, error);
             return;
         }
         // §5.2. A client has no error reply to send, so a message it cannot

@@ -1203,6 +1203,57 @@ describe('types JSON cannot carry', () => {
         expect(answer.flags).toBe('g');
     });
 
+    it('fails the caller when a hook of theirs throws on a reply', async () => {
+        // before unserialize took a hook, only malformed JSON failed to decode
+        // and there was no id to recover. Now a readable reply can fail, and a
+        // silent drop would leave the caller waiting for ever
+        const { client } = pair(
+            { resolve: () => ({ ok: () => 'fine', other: () => 'also fine' }) },
+            {
+                unserialize: (value: unknown) => {
+                    if (value && typeof value === 'object' && 'result' in value) {
+                        throw new Error('hook blew up');
+                    }
+                    return value;
+                }
+            }
+        );
+        // .catch, not expect().rejects - that helper calls a chain, because a
+        // chain is a function to typeof
+        const first = (await client
+            .require('app')
+            .ok()
+            .catch((e: Error) => e)) as Error;
+        expect(first.message).toBe('hook blew up');
+        // and the entry is gone, not left behind to answer the next one
+        const second = (await client
+            .require('app')
+            .other()
+            .catch((e: Error) => e)) as Error;
+        expect(second.message).toBe('hook blew up');
+    });
+
+    it('fails the host when a hook throws on a callback invocation', async () => {
+        // the mirror of the above: the host is awaiting this invocation, and
+        // nothing else will ever answer it
+        const { client } = pair(
+            { resolve: () => ({ run: async (fn: () => unknown) => await fn() }) },
+            {
+                unserialize: (value: unknown) => {
+                    if (value && typeof value === 'object' && 'callback' in value) {
+                        throw new Error('hook blew up');
+                    }
+                    return value;
+                }
+            }
+        );
+        const error = (await client
+            .require('app')
+            .run(() => 'never reached')
+            .catch((e: Error) => e)) as Error;
+        expect(error.message).toBe('hook blew up');
+    });
+
     it('still refuses a bigint when no hook claims it', async () => {
         const { client } = module_pair('app', { echo: (v: unknown) => v });
         await expect(client.require('app').echo(BigInt(1))).rejects.toThrow(

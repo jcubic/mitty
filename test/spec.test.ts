@@ -450,6 +450,106 @@ describe('§5.2 and §7.4 what a peer does with a frame it cannot use', () => {
         expect(await client.require('m').ok()).toBe('yes');
     });
 
+    it('§7.4 a request that fails to decode is still not answered', async () => {
+        // a hook of the caller's own throwing does not turn an overheard
+        // request into something this client owes an answer to
+        const { client, inject_reply, requests } = wired(
+            { resolve: () => ({ ok: () => 'fine' }) },
+            {
+                unserialize: (value: unknown) => {
+                    if (value && typeof value === 'object' && 'ops' in value) {
+                        throw new Error('hook blew up');
+                    }
+                    return value;
+                }
+            }
+        );
+        const before = requests.length;
+        inject_reply({
+            rorpc: VERSION,
+            id: 1,
+            namespace: 'm',
+            ops: [{ type: 'get', key: 'ok' }]
+        });
+        await settle();
+        expect(requests.length).toBe(before);
+        // and the client still works
+        expect(await client.require('m').ok()).toBe('fine');
+    });
+
+    it('§7.4 a frame that decodes to nothing waiting is dropped quietly', async () => {
+        const { client, inject_reply } = wired(
+            { resolve: () => ({ ok: () => 'fine' }) },
+            {
+                // only the two injected below, so the real reply still decodes
+                unserialize: (value: unknown) => {
+                    const seen = (value as { result?: unknown })?.result;
+                    if (seen === 'orphan' || seen === 'stranger') {
+                        throw new Error('hook blew up');
+                    }
+                    return value;
+                }
+            }
+        );
+        // a reply with no id, and a reply naming a call that is not in flight
+        inject_reply({ rorpc: VERSION, result: 'orphan' });
+        inject_reply({ rorpc: VERSION, id: 9876, result: 'stranger' });
+        await settle();
+        // neither is anyone's to fail, and the client is unharmed
+        expect(await client.require('m').ok()).toBe('fine');
+    });
+
+    it('§7.3 reports to onerror when it cannot even send the failure back', async () => {
+        // the invocation will not decode, and saying so needs serialize - which
+        // the same caller has also arranged to throw. onerror is the last place
+        // left to put it
+        const { client, failed } = wired(
+            { resolve: () => ({ run: async (fn: () => unknown) => await fn() }) },
+            {
+                unserialize: (value: unknown) => {
+                    if (value && typeof value === 'object' && 'callback' in value) {
+                        throw new Error('cannot read it');
+                    }
+                    return value;
+                },
+                // an Error is encoded before the hook is asked, so the hook
+                // cannot see one - it sees the message inside the marker
+                serialize: (value: unknown) => {
+                    if (value === 'cannot read it') {
+                        throw new Error('cannot write it either');
+                    }
+                    return value;
+                }
+            }
+        );
+        // the call now rejects, so it needs a catch of its own
+        const pending = Promise.resolve(client.require('m').run(() => 'never reached'));
+        pending.catch(() => {});
+        await settle();
+        expect((failed[0] as Error).message).toBe('cannot read it');
+    });
+
+    it('§7.4 makes an Error of a hook that threw something else', async () => {
+        const { client, inject_reply } = wired(
+            { resolve: () => ({ ok: () => new Promise(() => {}) }) },
+            {
+                unserialize: (value: unknown) => {
+                    if ((value as { result?: unknown })?.result === 'trip') {
+                        // not an Error, which a caller is free to do
+                        throw 'just a string';
+                    }
+                    return value;
+                }
+            }
+        );
+        const pending = Promise.resolve(client.require('m').ok());
+        await settle();
+        inject_reply({ rorpc: VERSION, id: 1, result: 'trip' });
+        const error = (await pending.catch((e: Error) => e)) as Error;
+        expect(error).toBeInstanceOf(Error);
+        expect(error.message).toBe('just a string');
+    });
+
     it('§5.2 a reply from another major fails the call it names', async () => {
         const { client, inject_reply } = wired({
             resolve: () => ({ ok: () => new Promise(() => {}) })
