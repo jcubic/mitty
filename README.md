@@ -667,6 +667,58 @@ for exactly this reason: not every language can look a value up like this.
 enumerate what that policy hides. An entry it returns without a string `name` is an error,
 not something quietly dropped — the key filter cannot judge a name that is not a string.
 
+### Sending what JSON cannot carry
+
+`object`, `function` and `error` are mitty's own `__type__` names. Every other one is
+yours, and that is how a `BigInt`, a `RegExp` or anything else JSON has no place for
+crosses the channel. Give it a marker on the way out and read it back on the way in:
+
+```js
+const serialize = value => {
+  if (typeof value === 'bigint') {
+    return { __type__: 'bigint', __data__: { value: value.toString() } };
+  }
+  if (value instanceof RegExp) {
+    return { __type__: 'regex', __data__: { source: value.source, flags: value.flags } };
+  }
+  return value; // not mine - leave it alone
+};
+
+const unserialize = value => {
+  if (value?.__type__ === 'bigint') return BigInt(value.__data__.value);
+  if (value?.__type__ === 'regex') {
+    return new RegExp(value.__data__.source, value.__data__.flags);
+  }
+  return value;
+};
+```
+
+> [!IMPORTANT]
+> **Both ends need the same pair.** The host takes them as options, and so does `connect()`:
+>
+> ```js
+> new Host({ channel, resolve, serialize, unserialize });
+> const { require } = connect(channel, { serialize, unserialize });
+> ```
+>
+> Give them to one side only and the other receives the raw marker — a plain object where
+> you meant a number. Nothing in the protocol says what `bigint` means; the two rules are
+> what make it mean anything.
+
+They apply at any depth, in either direction, and inside a callback's arguments:
+
+```js
+await $.grep(/^a/i, { limit: 10n }); // out
+const rule = await settings.pattern; // back, as a real RegExp
+```
+
+A `serialize` hook claims a value only by **returning something else**. Hand the value
+straight back and mitty's own handling is untouched, so a handle stays a handle and an
+error stays an error.
+
+Without a hook, a `BigInt` is refused with a clear error and a `RegExp` would flatten to
+`{}` the way `JSON.stringify` leaves it.
+
 ## API
 
 ### `new Host(options)`
@@ -755,9 +807,11 @@ mitty.describe(value);
 
 ### `connect(channel, options?)`
 
-| option    | type              | description                                                                                      |
-| --------- | ----------------- | ------------------------------------------------------------------------------------------------ |
-| `onerror` | `(error) => void` | Where a failed property assignment goes, since none can be awaited. Defaults to `console.error`. |
+| option        | type                 | description                                                                                      |
+| ------------- | -------------------- | ------------------------------------------------------------------------------------------------ |
+| `onerror`     | `(error) => void`    | Where a failed property assignment goes, since none can be awaited. Defaults to `console.error`. |
+| `serialize`   | `(value) => unknown` | Called for every outgoing value. Return a different value to send that instead.                  |
+| `unserialize` | `(value) => unknown` | Called for every incoming value, including a `__type__` mitty does not know.                     |
 
 Returns a client:
 

@@ -4,10 +4,20 @@ All notable changes to this project are documented in this file.
 
 Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic Versioning](https://semver.org).
 
+## [0.7.0]
+
+### Features
+
+- `connect()` now takes `serialize` and `unserialize`, the pair the host already had.
+- Use them to send a value JSON cannot carry. Give it a `__type__` of your own and read it back.
+- `object`, `function` and `error` belong to mitty. Every other `__type__` name is yours. See RO/RPC §6.4.
+- Both ends need the same pair. One end alone gets the raw marker, not the value.
+
 ## [0.6.0] - 2026-09-28
 
 ### Features
 
+- A hook claims a value only when it gives back a different one. A handle and an error stay as they are.
 - New `repr` option on the host. It makes the string form of a value that stays behind a handle.
 - `String(handle)` and `` `${handle}` `` now give that string. Before, they threw an error.
 - The host makes the repr when it makes the handle, and sends the two together. A string form cannot wait.

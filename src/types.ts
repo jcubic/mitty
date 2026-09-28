@@ -180,6 +180,14 @@ export interface ClientOptions {
     // awaited, so there is no caller to reject - without this a failure would
     // be silent. Defaults to reporting on the console.
     onerror?(error: unknown): void;
+    // called for every value on its way out. Return a different value to send
+    // that instead - which is how a type JSON has no place for travels: give
+    // it a marker of your own and decode it in `unserialize`. The host takes
+    // the same pair of hooks, and both ends need them to agree.
+    serialize?(value: unknown): unknown;
+    // called for every value coming in, including a marker whose `__type__`
+    // mitty does not recognise
+    unserialize?(value: unknown): unknown;
 }
 
 export interface Client {
