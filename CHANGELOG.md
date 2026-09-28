@@ -19,6 +19,7 @@ Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic 
 
 - A hook claims a value only when it gives back a different one. A handle and an error stay as they are.
 - A hook that throws on an incoming frame now fails the call that frame belongs to. Before, the caller waited for ever.
+- A client answers only for its own callback, and only for a version it reads. It does not answer for a peer.
 - New `repr` option on the host. It makes the string form of a value that stays behind a handle.
 - `String(handle)` and `` `${handle}` `` now give that string. Before, they threw an error.
 - The host makes the repr when it makes the handle, and sends the two together. A string form cannot wait.
