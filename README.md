@@ -607,7 +607,9 @@ it does, while `dir` here is the shorter name a REPL user reaches for.
 
 A property's `type` is present only when the host could learn it **without reading the
 value** — describing something must not run code, and a getter runs code. So a stored field
-is typed and `innerHTML` is not, though both report `readonly`.
+is typed and `innerHTML` is not, though both report `readonly`. The same holds one level
+down: whether a stored object arrives as data or as a handle depends on its `toJSON`, so a
+value whose `toJSON` is a getter is listed without a type rather than have that getter run.
 
 Types are always a list, since a union is the ordinary case:
 
