@@ -7,7 +7,13 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { Host, connect, is_remote, safe_key } from '../src/index';
-import type { Channel, ChannelListener, Description, HostOptions } from '../src/index';
+import type {
+    Channel,
+    ChannelListener,
+    ClientOptions,
+    Description,
+    HostOptions
+} from '../src/index';
 
 const VERSION = '1.0';
 
@@ -41,13 +47,23 @@ afterEach(() => {
     }
 });
 
-function wired(options: Omit<HostOptions, 'channel'>) {
+function wired(
+    options: Omit<HostOptions, 'channel'>,
+    client_options: ClientOptions = {}
+) {
     const host_wire = new Wire();
     const client_wire = new Wire();
     host_wire.peer = client_wire;
     client_wire.peer = host_wire;
     const host = new Host({ channel: host_wire, ...options });
-    const client = connect(client_wire);
+    // a set that fails has no caller to reject, so it reaches onerror. These
+    // are collected rather than left to the default, which writes to the
+    // console - a passing test should not print a stack trace
+    const failed: unknown[] = [];
+    const client = connect(client_wire, {
+        onerror: (error: unknown) => failed.push(error),
+        ...client_options
+    });
     open.push(() => {
         host.close();
         client.close();
@@ -55,6 +71,8 @@ function wired(options: Omit<HostOptions, 'channel'>) {
     return {
         host,
         client,
+        // what onerror was told, for a set nobody can await
+        failed,
         // what the host sent / what the client sent
         replies: host_wire.sent,
         requests: client_wire.sent,
@@ -433,10 +451,11 @@ describe('§9.2 error codes', () => {
     });
 
     it('-32011 for a set against null', async () => {
-        const { client, replies } = wired({ resolve: () => ({ nothing: null }) });
+        const { client, replies, failed } = wired({ resolve: () => ({ nothing: null }) });
         client.require('m').nothing.oops = 1;
         await settle();
         expect(last(replies).error.__data__.code).toBe(-32011);
+        expect((failed[0] as { code?: number }).code).toBe(-32011);
     });
 
     it('-32600 for a request naming neither a module nor a handle', async () => {
@@ -638,21 +657,24 @@ describe('§13.2 which keys a chain may walk', () => {
     it.each(['__proto__', 'constructor', 'prototype'])(
         'refuses to write %s',
         async key => {
-            const { client, replies } = wired({ resolve: target });
+            const { client, replies, failed } = wired({ resolve: target });
             client.require('m')[key] = 'nope';
             await settle();
             expect(last(replies).error.__data__.code).toBe(-32013);
+            expect((failed[0] as { code?: number }).code).toBe(-32013);
         }
     );
 
     // the attack the deny-list is actually for: reach a prototype through an
     // ordinary-looking chain, then write to it
     it('stops a chain from polluting every object in the program', async () => {
-        const { client } = wired({ resolve: target });
+        const { client, failed } = wired({ resolve: target });
         client.require('m').constructor.prototype.polluted = 'yes';
         await settle();
         expect(({} as Record<string, unknown>).polluted).toBeUndefined();
         expect(Object.prototype).not.toHaveProperty('polluted');
+        // refused at the first step, the `get` of constructor
+        expect((failed[0] as { code?: number }).code).toBe(-32013);
     });
 
     it('lets ordinary keys through', async () => {
@@ -682,11 +704,17 @@ describe('§13.2 which keys a chain may walk', () => {
 
     it('makes a host read-only with set: () => false', async () => {
         const object = { label: 'ok' };
-        const { client, replies } = wired({ resolve: () => object, set: () => false });
+        const { client, replies, failed } = wired({
+            resolve: () => object,
+            set: () => false
+        });
         client.require('m').label = 'changed';
         await settle();
         expect(object.label).toBe('ok');
         expect(last(replies).error.__data__.code).toBe(-32013);
+        // and the caller is told, by the one route a set has
+        expect((failed[0] as { code?: number }).code).toBe(-32013);
+        expect((failed[0] as Error).message).toMatch(/not permitted/i);
     });
 
     // a `require()` result is typed as callable, so TypeScript resolves .name
