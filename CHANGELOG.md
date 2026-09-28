@@ -17,13 +17,14 @@ Based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Semantic 
 - `dir()` answers two lists: `methods` and `properties`. Each entry has the same shape as its neighbours.
 - A property says `readonly`, and says `type` only when the host can learn it without reading the value.
 - A getter is never read to describe it. Reading runs code, and describing a value must not.
-- New `dir` option on the host. It says what `dir()` answers. Return `null` to refuse.
+- New `describe` option on the host. It says what `dir()` answers. Return `null` to refuse.
 - New `describe()` export. It is the default, and reads the value and its prototype chain.
-- `dir` does not name a key that the `get` policy refuses. It cannot show what that policy hides.
+- A `describe` entry with no string name is an error. The key filter cannot judge a name that is not a string.
+- `describe` does not name a key that the `get` policy refuses. It cannot show what that policy hides.
 - Only the name of a member is sure. In JavaScript the host can give the required count and little more.
 - A method can say what it gives back: `result: { type: ['remote', 'null'] }`. A type is always a list.
 - The type names are in RO/RPC §8.3.3. A host can add a name of its own, and a client must accept it.
-- mitty does not fill `result` in. A JavaScript function does not hold its return type. Your `dir` can.
+- mitty does not fill `result` in. A JavaScript function does not hold its return type. Your hook can.
 - New op `describe` in RO/RPC §8.3, and new error code `-32014` for a host that does not introspect.
 
 - An argument that JSON cannot carry gives a mitty error. It names the argument and says what the value is.

@@ -124,7 +124,7 @@ function type_of(value: unknown): TypeName | undefined {
 }
 
 // -----------------------------------------------------------------------------
-// The default for the Host's `dir` option: what `value` can do and what it
+// The default for the Host's `describe` option: what `value` can do and what
 // holds, each sorted by name.
 //
 // The prototype chain is walked for the same reason has_methods() walks it - a
@@ -138,7 +138,7 @@ function type_of(value: unknown): TypeName | undefined {
 // minified `find(e, t)` has lost them. `arity.required` is Function.length,
 // which counts the parameters before the first default, so
 // `append(node, mode = 'after')` reports 1 and cannot say a second is taken.
-// A host that knows its own API should supply its own `dir`.
+// A host that knows its own API should supply its own `describe`.
 // -----------------------------------------------------------------------------
 export function describe(value: unknown): Description {
     const methods = new Map<string, Method>();

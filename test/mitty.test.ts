@@ -748,12 +748,12 @@ describe('dir', () => {
             ],
             properties: [{ name: 'innerHTML', readonly: false, type: ['string'] }]
         };
-        const { client } = widget_pair({ dir: () => described });
+        const { client } = widget_pair({ describe: () => described });
         const handle = await client.require('app').get();
         expect(await dir(handle)).toEqual(described);
     });
 
-    it('refuses an entry the dir hook did not give a name', async () => {
+    it('refuses an entry the describe hook did not give a name', async () => {
         // every other hook return is checked loudly - repr must be a string,
         // get/set must be boolean - and this one has teeth: the key filter is
         // safe_key(entry.name), and safe_key answers true for anything that is
@@ -765,11 +765,11 @@ describe('dir', () => {
         ];
         for (const described of bad) {
             const { client } = widget_pair({
-                dir: () => described as unknown as Description
+                describe: () => described as unknown as Description
             });
             const handle = await client.require('app').get();
             const error = (await dir(handle).catch((e: Error) => e)) as Error;
-            expect(error.message).toMatch(/dir\(\).*name/i);
+            expect(error.message).toMatch(/describe\(\).*name/i);
         }
     });
 
@@ -798,7 +798,7 @@ describe('dir', () => {
     });
 
     it('reports a host that does not offer introspection', async () => {
-        const { client } = widget_pair({ dir: () => null });
+        const { client } = widget_pair({ describe: () => null });
         const handle = await client.require('app').get();
         const error = (await dir(handle).catch((e: Error) => e)) as Error & {
             code?: number;

@@ -626,7 +626,7 @@ Types are always a list, since a union is the ordinary case:
 The list is open: a host may use a name of its own, such as `"DateTime"`, and a client must
 not reject one it has not seen.
 
-A host that knows its own API can say much more, through the `dir` option:
+A host that knows its own API can say much more, through the `describe` option:
 
 ```js
 import { describe } from '@jcubic/mitty';
@@ -634,7 +634,7 @@ import { describe } from '@jcubic/mitty';
 new Host({
   channel,
   resolve,
-  dir(value) {
+  describe(value) {
     if (value instanceof Query) {
       return {
         methods: [
@@ -650,7 +650,9 @@ new Host({
         properties: [{ name: 'length', readonly: true, type: ['number'] }]
       };
     }
-    return describe(value); // the default
+    // the import, not this option - a method
+    // shorthand does not bind its own name
+    return describe(value);
   }
 });
 ```
@@ -659,8 +661,9 @@ Return `null` to refuse. That is an error on the client, not two empty lists —
 "nothing on this object", which is a different claim. Introspection is optional in RO/RPC
 for exactly this reason: not every language can look a value up like this.
 
-`dir` never names a key the host's `get` policy would refuse, so it cannot be used to
-enumerate what that policy hides.
+`describe` never names a key the host's `get` policy would refuse, so it cannot be used to
+enumerate what that policy hides. An entry it returns without a string `name` is an error,
+not something quietly dropped — the key filter cannot judge a name that is not a string.
 
 ## API
 
@@ -676,7 +679,7 @@ enumerate what that policy hides.
 | `get`         | `(key) => boolean`               | May a chain read this key? Defaults to `safe_key`. Replaces it rather than adding to it.                     |
 | `set`         | `(key) => boolean`               | May a chain write this key? Defaults to `safe_key`.                                                          |
 | `repr`        | `(value) => string`              | The string form of a value kept behind a handle. Built when the handle is minted. Defaults to `repr()`.      |
-| `dir`         | `(value) => Description \| null` | What `dir()` answers for a value kept here. `null` refuses. Defaults to `describe()`.                        |
+| `describe`    | `(value) => Description \| null` | What `dir()` answers for a value kept here. `null` refuses. Defaults to `describe()`.                        |
 
 `serialize` and `unserialize` are called with the host as `this`.
 
@@ -736,9 +739,17 @@ resolves to. Rejects if given something that is not remote.
 
 ### `describe(value)`
 
-The default for the host's `dir` option: `{ methods, properties }` for the value and its
-prototype chain, each sorted by name, stopping above `Object.prototype`. Members are read
-as descriptors, so asking never invokes a getter.
+The default for the host's `describe` option: `{ methods, properties }` for the value and
+its prototype chain, each sorted by name, stopping above `Object.prototype`. Members are
+read as descriptors, so asking never invokes a getter.
+
+The name is the one every test framework uses for its own global, so in a test file import
+it under another name, or reach it through the namespace:
+
+```js
+import * as mitty from '@jcubic/mitty';
+mitty.describe(value);
+```
 
 ### `connect(channel, options?)`
 
