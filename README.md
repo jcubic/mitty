@@ -83,7 +83,7 @@ const { require } = Mitty.connect(new BroadcastChannel('my-app'));
 
 The two cannot share one URL: `importScripts()` only accepts a classic script and
 rejects a file containing `export`, while `import` needs those exports. Pin a version
-with `@` when you want the URL to stay put, e.g. `@jcubic/mitty@0.4.0`.
+with `@` when you want the URL to stay put, e.g. `@jcubic/mitty@0.5.0`.
 
 ## Quick start
 
