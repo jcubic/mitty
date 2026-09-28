@@ -19,7 +19,7 @@ import type {
     ChannelListener,
     Client,
     ClientOptions,
-    Method,
+    Description,
     Op,
     Remote
 } from './types';
@@ -38,7 +38,7 @@ interface ChainInfo {
     // exported from the client object because dir() is a free function, and a
     // chain is the only thing it is given - it has to find its own way back
     // to the connection that made it
-    dir(): Promise<Method[]>;
+    dir(): Promise<Description>;
 }
 
 interface Message {
@@ -386,7 +386,7 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
                     return {
                         root,
                         ops,
-                        dir: () => call(root, [...ops, { type: 'dir' }])
+                        dir: () => call(root, [...ops, { type: 'describe' }])
                     } as ChainInfo;
                 }
                 // String(x), `${x}` and x + '' all land here. They cannot wait
@@ -495,10 +495,11 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
 // what gets described - so `await dir($('.terminal'))` works too, in one round
 // trip rather than two.
 //
-// Everything past `name` is optional; see the Method type. A host may refuse
-// outright, which is an error rather than an empty list.
+// Answers two lists, `methods` and `properties`. Everything past `name` in
+// either is optional; see the Method and Property types. A host may refuse
+// outright, which is an error rather than two empty lists.
 // -----------------------------------------------------------------------------
-export function dir(remote: unknown): Promise<Method[]> {
+export function dir(remote: unknown): Promise<Description> {
     const info = chain_info(remote);
     if (!info || typeof info.dir !== 'function') {
         return Promise.reject(
