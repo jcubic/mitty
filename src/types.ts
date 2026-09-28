@@ -81,7 +81,7 @@ export type Op =
 // and nothing else - Function.length stops at the first default parameter, so
 // the optional count is not merely unknown but unknowable without reading the
 // source. A language with real reflection can fill the rest, and a host that
-// knows its own API can supply all of it through the `dir` option.
+// knows its own API can supply all of it through the `describe` option.
 // -----------------------------------------------------------------------------
 // RO/RPC §8.3.1. The six JSON types, plus the two RO/RPC adds - `remote` for
 // a handle and `function` for a callback - plus `void` for a method that
@@ -149,7 +149,8 @@ export interface Property {
     type?: TypeName[];
 }
 
-// What `dir` answers. Two lists rather than one tagged list: an entry in
+// What `dir()` answers, and what the `describe` op (§8.3) carries. Two
+// lists rather than one tagged list: an entry in
 // either is the same shape as its neighbours, so nothing has to be
 // discriminated before it can be read.
 export interface Description {

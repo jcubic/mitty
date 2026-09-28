@@ -288,7 +288,7 @@ describe('§8.3 describe names what a value has', () => {
         const { inject, replies } = wired({
             resolve: () => ({ thing: {} }),
             // annotated, so this fails to compile if the types regress
-            dir: (): Description => ({
+            describe: (): Description => ({
                 methods: [
                     {
                         name: 'find',
@@ -331,7 +331,7 @@ describe('§8.3 describe names what a value has', () => {
         // its own, and a client that fails on it cannot talk to that host
         const { inject, replies } = wired({
             resolve: () => ({ thing: {} }),
-            dir: (): Description => ({
+            describe: (): Description => ({
                 methods: [{ name: 'when', result: { type: ['DateTime'] } }],
                 properties: [{ name: 'at', type: ['Decimal'] }]
             })
@@ -378,7 +378,7 @@ describe('§8.3 describe names what a value has', () => {
     it('§8.3 a host that does not introspect fails rather than answering nothing', async () => {
         const { inject, replies } = wired({
             resolve: () => ({ thing: { a: () => 1 } }),
-            dir: () => null
+            describe: () => null
         });
         inject({
             rorpc: VERSION,

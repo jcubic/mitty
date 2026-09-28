@@ -55,10 +55,11 @@ export interface HostOptions {
     // the handle is minted and sent with it, so `String(handle)` in the client
     // answers without a round trip. Defaults to the exported repr().
     repr?(this: Host, value: unknown): string;
-    // what dir() on the client answers for a value kept here. Defaults to
-    // methods(). Return null to refuse - RO/RPC makes introspection optional,
-    // because not every language can look a value up like this.
-    dir?(this: Host, value: unknown): Description | null;
+    // what dir() on the client answers for a value kept here - the RO/RPC
+    // `describe` op (§8.3). Defaults to the exported describe(). Return null
+    // to refuse: introspection is optional in RO/RPC, because not every
+    // language can look a value up like this.
+    describe?(this: Host, value: unknown): Description | null;
 }
 
 interface Message {
@@ -415,16 +416,16 @@ export class Host {
     // Introspection is OPTIONAL in RO/RPC: a host that will not do it says so
     // with a code, rather than answering an empty list that reads as "no
     // methods". The key policy applies here too - a name a chain may not read
-    // is a name this must not hand out, or `dir` becomes the way to find the
+    // is a name this must not hand out, or `describe` becomes the way to find
     // keys `get` refuses.
     private _describe(value: unknown, label: string): Description {
-        const rule = this._options.dir ?? describe;
+        const rule = this._options.describe ?? describe;
         const listed = rule.call(this, value);
         if (listed === null || listed === undefined) {
             throw no_introspection(label || 'this value');
         }
         if (!Array.isArray(listed?.methods) || !Array.isArray(listed?.properties)) {
-            throw internal('dir() must answer { methods, properties } or null');
+            throw internal('describe() must answer { methods, properties } or null');
         }
         // the filter below is the key policy, and it is safe_key() that
         // answers it - which says true for anything that is not a string,
@@ -435,7 +436,7 @@ export class Host {
             entries.filter(entry => {
                 if (typeof entry?.name !== 'string') {
                     throw internal(
-                        `dir() gave a ${which} entry whose name is ` +
+                        `describe() gave a ${which} entry whose name is ` +
                             `${typeof entry?.name}, not a string`
                     );
                 }
