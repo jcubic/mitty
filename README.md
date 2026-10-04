@@ -32,6 +32,7 @@ await it.
 // inside a worker — no DOM here
 const $ = require('$');
 await $('#list').find('li').first().text(); // one message, not four
+await $('#editor').on('click', () => console.log('clicked')); // callback support
 ```
 
 ## Universal Communication
