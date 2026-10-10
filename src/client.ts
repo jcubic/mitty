@@ -288,7 +288,14 @@ export function connect(channel: Channel, options: ClientOptions = {}): Client {
         try {
             post({ call: data.call, result: await fn(...(data.args ?? [])) });
         } catch (error) {
-            post({ call: data.call, error });
+            let failure: Error;
+            try {
+                failure = error instanceof Error ? error : new Error(String(error));
+            } catch {
+                // Even string conversion can fail, for example for a null-prototype object.
+                failure = new Error('Callback failed');
+            }
+            post({ call: data.call, error: failure });
         }
     }
 
